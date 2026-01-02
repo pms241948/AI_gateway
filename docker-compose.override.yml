@@ -1,0 +1,52 @@
+# Docker Compose override for optional services
+# Usage: docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+
+services:
+  # ===========================================
+  # Presidio Analyzer (PII Detection)
+  # ===========================================
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:latest
+    container_name: ai_gateway_presidio_analyzer
+    ports:
+      - "3001:3000"
+    networks:
+      - ai_gateway_network
+    profiles:
+      - masking
+
+  # ===========================================
+  # Presidio Anonymizer (PII Masking)
+  # ===========================================
+  presidio-anonymizer:
+    image: mcr.microsoft.com/presidio-anonymizer:latest
+    container_name: ai_gateway_presidio_anonymizer
+    ports:
+      - "3002:3000"
+    networks:
+      - ai_gateway_network
+    profiles:
+      - masking
+
+  # ===========================================
+  # Keycloak (SSO IdP)
+  # ===========================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:22.0
+    container_name: ai_gateway_keycloak
+    command: start-dev
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      - KC_DB=postgres
+      - KC_DB_URL=jdbc:postgresql://postgres:5432/keycloak
+      - KC_DB_USERNAME=ai_gateway
+      - KC_DB_PASSWORD=${DB_PASSWORD:-password}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    networks:
+      - ai_gateway_network
+    profiles:
+      - sso
