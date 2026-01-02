@@ -85,6 +85,7 @@ function Sidebar() {
         { path: '/logs', label: 'Request Logs', icon: '📋' },
         { path: '/organizations', label: 'Organizations', icon: '🏢' },
         { path: '/users', label: 'Users', icon: '👥' },
+        { path: '/pii-settings', label: 'PII Masking', icon: '🔒' },
     ]
 
     return (
@@ -1294,6 +1295,638 @@ function UsersPage() {
     )
 }
 
+// PII Settings Page
+function PIISettingsPage() {
+    const [config, setConfig] = useState(null)
+    const [entities, setEntities] = useState([])
+    const [testText, setTestText] = useState('')
+    const [testResult, setTestResult] = useState(null)
+    const [loading, setLoading] = useState(true)
+    const [testing, setTesting] = useState(false)
+
+    // Model management state
+    const [nlpModels, setNlpModels] = useState([])
+    const [recognizers, setRecognizers] = useState([])
+    const [showAddRecognizer, setShowAddRecognizer] = useState(false)
+    const [newRecognizer, setNewRecognizer] = useState({ name: '', display_name: '', pattern: '', score: 0.85 })
+    const [patternTestText, setPatternTestText] = useState('')
+    const [patternTestResult, setPatternTestResult] = useState(null)
+
+    // Edit recognizer state
+    const [editRecognizer, setEditRecognizer] = useState(null)
+    const [editPatternTestText, setEditPatternTestText] = useState('')
+    const [editPatternTestResult, setEditPatternTestResult] = useState(null)
+
+    // NLP model management state
+    const [showAddNlpModel, setShowAddNlpModel] = useState(false)
+    const [newNlpModel, setNewNlpModel] = useState({ name: '', lang_code: '', model_name: '', description: '' })
+
+    useEffect(() => {
+        loadConfig()
+    }, [])
+
+    const loadConfig = async () => {
+        try {
+            const [configData, entitiesData, modelsData, recognizersData] = await Promise.all([
+                api.getPIIConfig(),
+                api.getPIIEntities(),
+                api.getNlpModels().catch(() => []),
+                api.getRecognizers().catch(() => [])
+            ])
+            setConfig(configData)
+            setEntities(entitiesData.entities || [])
+            setNlpModels(modelsData || [])
+            setRecognizers(recognizersData || [])
+        } catch (err) {
+            console.error('Failed to load PII config:', err)
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const handleTest = async () => {
+        if (!testText.trim()) return
+        setTesting(true)
+        setTestResult(null)
+        try {
+            const result = await api.testPIIMasking(testText)
+            setTestResult(result)
+        } catch (err) {
+            alert('테스트 실패: ' + err.message)
+        } finally {
+            setTesting(false)
+        }
+    }
+
+    const handleAddRecognizer = async () => {
+        if (!newRecognizer.name || !newRecognizer.pattern) {
+            alert('이름과 패턴은 필수입니다.')
+            return
+        }
+        try {
+            await api.createRecognizer(newRecognizer)
+            setShowAddRecognizer(false)
+            setNewRecognizer({ name: '', display_name: '', pattern: '', score: 0.85 })
+            loadConfig()
+        } catch (err) {
+            alert('추가 실패: ' + err.message)
+        }
+    }
+
+    const handleDeleteRecognizer = async (id) => {
+        if (!confirm('이 인식기를 삭제하시겠습니까?')) return
+        try {
+            await api.deleteRecognizer(id)
+            loadConfig()
+        } catch (err) {
+            alert('삭제 실패: ' + err.message)
+        }
+    }
+
+    const handleTestPattern = async () => {
+        if (!newRecognizer.pattern || !patternTestText) return
+        try {
+            const result = await api.testPattern(newRecognizer.pattern, patternTestText)
+            setPatternTestResult(result)
+        } catch (err) {
+            alert('패턴 테스트 실패: ' + err.message)
+        }
+    }
+
+    // Edit recognizer handlers
+    const handleEditRecognizer = (rec) => {
+        setEditRecognizer({ ...rec })
+        setEditPatternTestText('')
+        setEditPatternTestResult(null)
+    }
+
+    const handleUpdateRecognizer = async () => {
+        if (!editRecognizer) return
+        try {
+            await api.updateRecognizer(editRecognizer.id, {
+                display_name: editRecognizer.display_name,
+                pattern: editRecognizer.pattern,
+                score: editRecognizer.score,
+                is_enabled: editRecognizer.is_enabled
+            })
+            setEditRecognizer(null)
+            loadConfig()
+        } catch (err) {
+            alert('수정 실패: ' + err.message)
+        }
+    }
+
+    const handleEditTestPattern = async () => {
+        if (!editRecognizer?.pattern || !editPatternTestText) return
+        try {
+            const result = await api.testPattern(editRecognizer.pattern, editPatternTestText)
+            setEditPatternTestResult(result)
+        } catch (err) {
+            alert('패턴 테스트 실패: ' + err.message)
+        }
+    }
+
+    // NLP model handlers
+    const handleAddNlpModel = async () => {
+        if (!newNlpModel.name || !newNlpModel.lang_code || !newNlpModel.model_name) {
+            alert('이름, 언어 코드, 모델명은 필수입니다.')
+            return
+        }
+        try {
+            await api.addNlpModel(newNlpModel)
+            setShowAddNlpModel(false)
+            setNewNlpModel({ name: '', lang_code: '', model_name: '', description: '' })
+            loadConfig()
+        } catch (err) {
+            alert('NLP 모델 추가 실패: ' + err.message)
+        }
+    }
+
+    const handleDeleteNlpModel = async (id) => {
+        if (!confirm('이 NLP 모델을 삭제하시겠습니까?')) return
+        try {
+            await api.deleteNlpModel(id)
+            loadConfig()
+        } catch (err) {
+            alert('삭제 실패: ' + err.message)
+        }
+    }
+
+    if (loading) {
+        return (
+            <Layout>
+                <div className="page-header">
+                    <h1 className="page-title">🔒 PII Masking Settings</h1>
+                </div>
+                <div className="card"><p>Loading...</p></div>
+            </Layout>
+        )
+    }
+
+    return (
+        <Layout>
+            <div className="page-header">
+                <h1 className="page-title">🔒 PII Masking Settings</h1>
+                <p style={{ color: 'var(--color-text-muted)', marginTop: 'var(--spacing-2)' }}>
+                    개인식별정보(PII) 자동 탐지 및 마스킹 설정
+                </p>
+            </div>
+
+            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 'var(--spacing-4)' }}>
+                {/* Configuration Card */}
+                <div className="card">
+                    <h3 style={{ marginBottom: 'var(--spacing-4)' }}>현재 설정</h3>
+                    <div className="table-container">
+                        <table className="table">
+                            <tbody>
+                                <tr>
+                                    <td style={{ fontWeight: 500 }}>마스킹 활성화</td>
+                                    <td>
+                                        <span className={`badge ${config?.enabled ? 'badge-success' : 'badge-secondary'}`}>
+                                            {config?.enabled ? 'ON' : 'OFF'}
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style={{ fontWeight: 500 }}>요청 마스킹</td>
+                                    <td>
+                                        <span className={`badge ${config?.mask_request ? 'badge-success' : 'badge-secondary'}`}>
+                                            {config?.mask_request ? 'ON' : 'OFF'}
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style={{ fontWeight: 500 }}>응답 마스킹</td>
+                                    <td>
+                                        <span className={`badge ${config?.mask_response ? 'badge-success' : 'badge-secondary'}`}>
+                                            {config?.mask_response ? 'ON' : 'OFF'}
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style={{ fontWeight: 500 }}>마스킹 방식</td>
+                                    <td><code>{config?.mask_type}</code></td>
+                                </tr>
+                                <tr>
+                                    <td style={{ fontWeight: 500 }}>감지 언어</td>
+                                    <td><code>{config?.language}</code></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p style={{ marginTop: 'var(--spacing-3)', fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
+                        설정 변경은 환경변수(.env)를 수정 후 서버 재시작이 필요합니다.
+                    </p>
+                </div>
+
+                {/* NLP Models Card */}
+                <div className="card">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-4)' }}>
+                        <h3>🧠 NLP 모델</h3>
+                        <button className="btn btn-secondary" onClick={() => setShowAddNlpModel(!showAddNlpModel)}>
+                            {showAddNlpModel ? '취소' : '+ 모델 추가'}
+                        </button>
+                    </div>
+
+                    {showAddNlpModel && (
+                        <div style={{
+                            background: 'var(--color-bg-secondary)',
+                            padding: 'var(--spacing-3)',
+                            borderRadius: 'var(--radius-md)',
+                            marginBottom: 'var(--spacing-3)'
+                        }}>
+                            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 'var(--spacing-2)' }}>
+                                <input
+                                    className="form-input"
+                                    placeholder="표시 이름 (예: Korean)"
+                                    value={newNlpModel.name}
+                                    onChange={e => setNewNlpModel({ ...newNlpModel, name: e.target.value })}
+                                />
+                                <input
+                                    className="form-input"
+                                    placeholder="언어 코드 (예: ko)"
+                                    value={newNlpModel.lang_code}
+                                    onChange={e => setNewNlpModel({ ...newNlpModel, lang_code: e.target.value })}
+                                />
+                            </div>
+                            <input
+                                className="form-input"
+                                style={{ marginTop: 'var(--spacing-2)' }}
+                                placeholder="spaCy 모델명 (예: ko_core_news_sm)"
+                                value={newNlpModel.model_name}
+                                onChange={e => setNewNlpModel({ ...newNlpModel, model_name: e.target.value })}
+                            />
+                            <button className="btn btn-primary" style={{ marginTop: 'var(--spacing-2)' }} onClick={handleAddNlpModel}>추가</button>
+                        </div>
+                    )}
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-2)' }}>
+                        {nlpModels.map(model => (
+                            <div key={model.id} style={{
+                                padding: 'var(--spacing-2) var(--spacing-3)',
+                                background: 'var(--color-bg-secondary)',
+                                borderRadius: 'var(--radius-md)',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center'
+                            }}>
+                                <div>
+                                    <div style={{ fontWeight: 500 }}>{model.name}</div>
+                                    <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
+                                        {model.model_name} ({model.lang_code})
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: 'var(--spacing-2)', alignItems: 'center' }}>
+                                    <span className={`badge ${model.is_enabled ? 'badge-success' : 'badge-secondary'}`}>
+                                        {model.is_enabled ? 'ON' : 'OFF'}
+                                    </span>
+                                    {model.is_default && (
+                                        <span className="badge badge-primary">기본</span>
+                                    )}
+                                    {!model.is_default && (
+                                        <button
+                                            className="btn btn-secondary"
+                                            style={{ padding: '4px 8px', fontSize: 'var(--font-size-xs)' }}
+                                            onClick={() => handleDeleteNlpModel(model.id)}
+                                        >
+                                            삭제
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                        {nlpModels.length === 0 && (
+                            <div style={{ color: 'var(--color-text-muted)', textAlign: 'center', padding: 'var(--spacing-2)' }}>
+                                en_core_web_sm (기본 내장)
+                            </div>
+                        )}
+                    </div>
+                    <p style={{ marginTop: 'var(--spacing-3)', fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
+                        ⚠️ 추가할 모델은 Docker 이미지에 먼저 설치되어 있어야 합니다.
+                    </p>
+                </div>
+            </div>
+
+            {/* Custom Recognizers Section */}
+            <div className="card" style={{ marginTop: 'var(--spacing-4)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--spacing-4)' }}>
+                    <h3>🎯 PII 인식기</h3>
+                    <button className="btn btn-primary" onClick={() => setShowAddRecognizer(!showAddRecognizer)}>
+                        {showAddRecognizer ? '취소' : '+ 인식기 추가'}
+                    </button>
+                </div>
+
+                {showAddRecognizer && (
+                    <div style={{
+                        background: 'var(--color-bg-secondary)',
+                        padding: 'var(--spacing-4)',
+                        borderRadius: 'var(--radius-md)',
+                        marginBottom: 'var(--spacing-4)'
+                    }}>
+                        <h4 style={{ marginBottom: 'var(--spacing-3)' }}>새 인식기 추가</h4>
+                        <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 'var(--spacing-3)' }}>
+                            <div className="form-group">
+                                <label className="form-label">엔티티 이름 (영문 대문자)</label>
+                                <input
+                                    className="form-input"
+                                    placeholder="KOREAN_PASSPORT"
+                                    value={newRecognizer.name}
+                                    onChange={e => setNewRecognizer({ ...newRecognizer, name: e.target.value.toUpperCase().replace(/[^A-Z_]/g, '') })}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label">표시 이름</label>
+                                <input
+                                    className="form-input"
+                                    placeholder="여권번호"
+                                    value={newRecognizer.display_name}
+                                    onChange={e => setNewRecognizer({ ...newRecognizer, display_name: e.target.value })}
+                                />
+                            </div>
+                        </div>
+                        <div className="form-group" style={{ marginTop: 'var(--spacing-3)' }}>
+                            <label className="form-label">정규식 패턴</label>
+                            <input
+                                className="form-input"
+                                placeholder="[A-Z]{1}[0-9]{8}"
+                                value={newRecognizer.pattern}
+                                onChange={e => setNewRecognizer({ ...newRecognizer, pattern: e.target.value })}
+                            />
+                        </div>
+                        <div className="form-group" style={{ marginTop: 'var(--spacing-3)' }}>
+                            <label className="form-label">패턴 테스트</label>
+                            <div style={{ display: 'flex', gap: 'var(--spacing-2)' }}>
+                                <input
+                                    className="form-input"
+                                    placeholder="테스트할 텍스트 입력"
+                                    value={patternTestText}
+                                    onChange={e => setPatternTestText(e.target.value)}
+                                    style={{ flex: 1 }}
+                                />
+                                <button className="btn btn-secondary" onClick={handleTestPattern}>테스트</button>
+                            </div>
+                            {patternTestResult && (
+                                <div style={{ marginTop: 'var(--spacing-2)', fontSize: 'var(--font-size-sm)' }}>
+                                    매칭: {patternTestResult.count}개
+                                    {patternTestResult.matches.map((m, i) => (
+                                        <span key={i} style={{ marginLeft: 'var(--spacing-2)', color: 'var(--color-success)' }}>
+                                            [{m.text}]
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <div style={{ marginTop: 'var(--spacing-4)' }}>
+                            <button className="btn btn-primary" onClick={handleAddRecognizer}>추가</button>
+                        </div>
+                    </div>
+                )}
+
+                <div className="table-container">
+                    <table className="table">
+                        <thead>
+                            <tr>
+                                <th>이름</th>
+                                <th>표시명</th>
+                                <th>패턴</th>
+                                <th>신뢰도</th>
+                                <th>유형</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {recognizers.map(rec => (
+                                <tr key={rec.id}>
+                                    <td><code>{rec.name}</code></td>
+                                    <td>{rec.display_name}</td>
+                                    <td style={{ maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        <code style={{ fontSize: 'var(--font-size-xs)' }}>{rec.pattern}</code>
+                                    </td>
+                                    <td>{(rec.score * 100).toFixed(0)}%</td>
+                                    <td>
+                                        <span className={`badge ${rec.is_builtin ? 'badge-primary' : 'badge-secondary'}`}>
+                                            {rec.is_builtin ? '내장' : '커스텀'}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <div style={{ display: 'flex', gap: 'var(--spacing-1)' }}>
+                                            {!rec.is_builtin && (
+                                                <>
+                                                    <button
+                                                        className="btn btn-secondary"
+                                                        style={{ padding: '4px 8px', fontSize: 'var(--font-size-xs)' }}
+                                                        onClick={() => handleEditRecognizer(rec)}
+                                                    >
+                                                        수정
+                                                    </button>
+                                                    <button
+                                                        className="btn btn-secondary"
+                                                        style={{ padding: '4px 8px', fontSize: 'var(--font-size-xs)' }}
+                                                        onClick={() => handleDeleteRecognizer(rec.id)}
+                                                    >
+                                                        삭제
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* Edit Recognizer Modal */}
+            {editRecognizer && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: 'rgba(0,0,0,0.5)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 1000
+                }}>
+                    <div style={{
+                        background: 'var(--color-bg-primary)',
+                        padding: 'var(--spacing-6)',
+                        borderRadius: 'var(--radius-lg)',
+                        maxWidth: '500px',
+                        width: '100%',
+                        maxHeight: '80vh',
+                        overflow: 'auto'
+                    }}>
+                        <h3 style={{ marginBottom: 'var(--spacing-4)' }}>✏️ 인식기 수정</h3>
+                        <div className="form-group">
+                            <label className="form-label">엔티티 이름</label>
+                            <input className="form-input" value={editRecognizer.name} disabled />
+                        </div>
+                        <div className="form-group" style={{ marginTop: 'var(--spacing-3)' }}>
+                            <label className="form-label">표시 이름</label>
+                            <input
+                                className="form-input"
+                                value={editRecognizer.display_name}
+                                onChange={e => setEditRecognizer({ ...editRecognizer, display_name: e.target.value })}
+                            />
+                        </div>
+                        <div className="form-group" style={{ marginTop: 'var(--spacing-3)' }}>
+                            <label className="form-label">정규식 패턴</label>
+                            <input
+                                className="form-input"
+                                value={editRecognizer.pattern}
+                                onChange={e => setEditRecognizer({ ...editRecognizer, pattern: e.target.value })}
+                            />
+                        </div>
+                        <div className="form-group" style={{ marginTop: 'var(--spacing-3)' }}>
+                            <label className="form-label">신뢰도 ({(editRecognizer.score * 100).toFixed(0)}%)</label>
+                            <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.05"
+                                value={editRecognizer.score}
+                                onChange={e => setEditRecognizer({ ...editRecognizer, score: parseFloat(e.target.value) })}
+                                style={{ width: '100%' }}
+                            />
+                        </div>
+                        <div className="form-group" style={{ marginTop: 'var(--spacing-3)' }}>
+                            <label className="form-label">패턴 테스트</label>
+                            <div style={{ display: 'flex', gap: 'var(--spacing-2)' }}>
+                                <input
+                                    className="form-input"
+                                    placeholder="테스트할 텍스트"
+                                    value={editPatternTestText}
+                                    onChange={e => setEditPatternTestText(e.target.value)}
+                                    style={{ flex: 1 }}
+                                />
+                                <button className="btn btn-secondary" onClick={handleEditTestPattern}>테스트</button>
+                            </div>
+                            {editPatternTestResult && (
+                                <div style={{ marginTop: 'var(--spacing-2)', fontSize: 'var(--font-size-sm)' }}>
+                                    매칭: {editPatternTestResult.count}개
+                                    {editPatternTestResult.matches.map((m, i) => (
+                                        <span key={i} style={{ marginLeft: 'var(--spacing-2)', color: 'var(--color-success)' }}>
+                                            [{m.text}]
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <div style={{ marginTop: 'var(--spacing-4)', display: 'flex', gap: 'var(--spacing-2)', justifyContent: 'flex-end' }}>
+                            <button className="btn btn-secondary" onClick={() => setEditRecognizer(null)}>취소</button>
+                            <button className="btn btn-primary" onClick={handleUpdateRecognizer}>저장</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Test Section */}
+            <div className="card" style={{ marginTop: 'var(--spacing-4)' }}>
+                <h3 style={{ marginBottom: 'var(--spacing-4)' }}>🧪 마스킹 테스트</h3>
+                <p style={{ marginBottom: 'var(--spacing-3)', color: 'var(--color-text-muted)' }}>
+                    샘플 텍스트를 입력하여 PII 탐지 및 마스킹 결과를 미리 확인할 수 있습니다.
+                </p>
+                <div className="form-group">
+                    <label className="form-label">테스트 텍스트</label>
+                    <textarea
+                        className="form-input"
+                        rows="4"
+                        value={testText}
+                        onChange={(e) => setTestText(e.target.value)}
+                        placeholder="예: 제 이메일은 test@example.com이고 전화번호는 010-1234-5678입니다. 주민번호는 901231-1234567입니다."
+                    />
+                </div>
+                <button
+                    className="btn btn-primary"
+                    onClick={handleTest}
+                    disabled={testing || !testText.trim()}
+                >
+                    {testing ? '분석 중...' : '마스킹 테스트'}
+                </button>
+
+                {testResult && (
+                    <div style={{ marginTop: 'var(--spacing-4)' }}>
+                        <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 'var(--spacing-4)' }}>
+                            <div>
+                                <h4 style={{ marginBottom: 'var(--spacing-2)' }}>원본 텍스트</h4>
+                                <div style={{
+                                    padding: 'var(--spacing-3)',
+                                    background: 'var(--color-bg-secondary)',
+                                    borderRadius: 'var(--radius-md)',
+                                    fontFamily: 'monospace',
+                                    whiteSpace: 'pre-wrap'
+                                }}>
+                                    {testResult.original_text}
+                                </div>
+                            </div>
+                            <div>
+                                <h4 style={{ marginBottom: 'var(--spacing-2)' }}>마스킹 결과</h4>
+                                <div style={{
+                                    padding: 'var(--spacing-3)',
+                                    background: 'var(--color-success-bg)',
+                                    borderRadius: 'var(--radius-md)',
+                                    fontFamily: 'monospace',
+                                    whiteSpace: 'pre-wrap',
+                                    border: '1px solid var(--color-success)'
+                                }}>
+                                    {testResult.masked_text}
+                                </div>
+                            </div>
+                        </div>
+
+                        {testResult.entities_count > 0 && (
+                            <div style={{ marginTop: 'var(--spacing-4)' }}>
+                                <h4 style={{ marginBottom: 'var(--spacing-2)' }}>
+                                    탐지된 PII ({testResult.entities_count}개)
+                                </h4>
+                                <div className="table-container">
+                                    <table className="table">
+                                        <thead>
+                                            <tr>
+                                                <th>유형</th>
+                                                <th>원본 값</th>
+                                                <th>신뢰도</th>
+                                                <th>위치</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {testResult.entities_found.map((entity, idx) => (
+                                                <tr key={idx}>
+                                                    <td><code>{entity.entity_type}</code></td>
+                                                    <td style={{ fontFamily: 'monospace' }}>{entity.original}</td>
+                                                    <td>{(entity.score * 100).toFixed(0)}%</td>
+                                                    <td>{entity.start}-{entity.end}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+
+                        {testResult.entities_count === 0 && (
+                            <div style={{
+                                marginTop: 'var(--spacing-4)',
+                                padding: 'var(--spacing-3)',
+                                background: 'var(--color-bg-secondary)',
+                                borderRadius: 'var(--radius-md)',
+                                textAlign: 'center',
+                                color: 'var(--color-text-muted)'
+                            }}>
+                                PII가 탐지되지 않았습니다.
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        </Layout>
+    )
+}
+
 // Main App
 export default function App() {
     return (
@@ -1306,6 +1939,7 @@ export default function App() {
                 <Route path="/logs" element={<ProtectedRoute><LogsPage /></ProtectedRoute>} />
                 <Route path="/organizations" element={<ProtectedRoute><OrganizationsPage /></ProtectedRoute>} />
                 <Route path="/users" element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
+                <Route path="/pii-settings" element={<ProtectedRoute><PIISettingsPage /></ProtectedRoute>} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
         </AuthProvider>

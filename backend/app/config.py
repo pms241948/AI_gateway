@@ -58,10 +58,12 @@ class Settings(BaseSettings):
     oidc_client_secret: Optional[str] = None
     oidc_redirect_uri: Optional[str] = None
 
-    # Presidio (Optional)
-    presidio_enabled: bool = False
-    presidio_analyzer_url: str = "http://presidio-analyzer:3000"
-    presidio_anonymizer_url: str = "http://presidio-anonymizer:3000"
+    # PII Masking (Presidio)
+    pii_masking_enabled: bool = True
+    pii_mask_request: bool = True
+    pii_mask_response: bool = False
+    pii_mask_type: str = "replace"  # replace, redact, hash
+    pii_language: str = "en"
 
     # Security Scan (Optional)
     security_scan_enabled: bool = False

@@ -11,6 +11,7 @@ from app.models.llm_model import (
 )
 from app.models.logs import RequestLog, AuditLog, HealthCheckResult, SecurityScanResult
 from app.models.policy import MaskingPolicy, MaskingEntity
+from app.models.pii_models import PIINlpModel, PIIRecognizer, PIIApiEndpoint
 
 __all__ = [
     "User",
@@ -33,4 +34,8 @@ __all__ = [
     "SecurityScanResult",
     "MaskingPolicy",
     "MaskingEntity",
+    "PIINlpModel",
+    "PIIRecognizer",
+    "PIIApiEndpoint",
 ]
+

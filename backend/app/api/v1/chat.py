@@ -7,16 +7,19 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_model_router, get_request_logger
+from app.config import get_settings
 from app.core.auth import get_current_user
 from app.core.exceptions import AIGatewayException
 from app.database import get_db
 from app.models.user import User
 from app.schemas.openai import ChatCompletionRequest, ChatCompletionResponse
 from app.services.logger import RequestLogger
+from app.services.masking import get_masking_service, PIIMaskingService
 from app.services.normalizer import ResponseNormalizer
 from app.services.router import ModelRouter, AccessDeniedError
 
 router = APIRouter(tags=["Chat"])
+settings = get_settings()
 
 
 @router.post("/chat/completions", response_model=ChatCompletionResponse)
@@ -34,25 +37,49 @@ async def create_chat_completion(
     Supports both streaming and non-streaming responses.
     """
     start_time = time.time()
+    pii_entities_found = []
     
     try:
+        # Apply PII masking to request if enabled
+        masked_request = request
+        if settings.pii_masking_enabled and settings.pii_mask_request:
+            try:
+                masking_service = get_masking_service()
+                masked_messages, pii_entities = masking_service.mask_chat_messages(
+                    [m.model_dump() for m in request.messages],
+                    language=settings.pii_language,
+                )
+                pii_entities_found = pii_entities
+                
+                # Create new request with masked messages
+                if pii_entities:
+                    from app.schemas.openai import ChatMessage
+                    masked_request = request.model_copy(
+                        update={"messages": [ChatMessage(**m) for m in masked_messages]}
+                    )
+            except Exception as e:
+                # Log masking error but continue with original request
+                import logging
+                logging.warning(f"PII masking failed: {e}")
+        
         # Route request to appropriate model/endpoint
         model, endpoint, provider = await router_service.route_request(
-            request.model,
+            masked_request.model,
             current_user,
         )
         
         # Handle streaming
-        if request.stream:
+        if masked_request.stream:
             return StreamingResponse(
                 stream_completion(
-                    request,
+                    masked_request,
                     model,
                     endpoint,
                     provider,
                     current_user,
                     logger,
                     db,
+                    pii_entities_found,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -62,7 +89,7 @@ async def create_chat_completion(
             )
         
         # Non-streaming request
-        provider_response = await provider.chat_completion(request)
+        provider_response = await provider.chat_completion(masked_request)
         
         latency_ms = int((time.time() - start_time) * 1000)
         
@@ -77,7 +104,11 @@ async def create_chat_completion(
                 status_code=502,
                 latency_ms=latency_ms,
                 provider_response=provider_response,
-                request_metadata={"model_alias": request.model},
+                request_metadata={
+                    "model_alias": request.model,
+                    "pii_masked": len(pii_entities_found) > 0,
+                    "pii_entities_count": len(pii_entities_found),
+                },
             )
             await db.commit()
             
@@ -106,7 +137,11 @@ async def create_chat_completion(
             status_code=200,
             latency_ms=latency_ms,
             provider_response=provider_response,
-            request_metadata={"model_alias": request.model},
+            request_metadata={
+                "model_alias": request.model,
+                "pii_masked": len(pii_entities_found) > 0,
+                "pii_entities_count": len(pii_entities_found),
+            },
         )
         await db.commit()
         
@@ -169,9 +204,11 @@ async def stream_completion(
     user: User,
     logger: RequestLogger,
     db: AsyncSession,
+    pii_entities_found: list = None,
 ):
     """Stream chat completion response."""
     start_time = time.time()
+    pii_entities_found = pii_entities_found or []
     
     try:
         async for chunk in provider.chat_completion_stream(request):
@@ -187,6 +224,11 @@ async def stream_completion(
             method="POST",
             status_code=200,
             latency_ms=latency_ms,
-            request_metadata={"model_alias": request.model, "stream": True},
+            request_metadata={
+                "model_alias": request.model,
+                "stream": True,
+                "pii_masked": len(pii_entities_found) > 0,
+                "pii_entities_count": len(pii_entities_found),
+            },
         )
         await db.commit()

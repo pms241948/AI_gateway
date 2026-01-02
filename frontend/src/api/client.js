@@ -240,6 +240,71 @@ class ApiClient {
     async getMyModels() {
         return this.request(`/api/model-access/me/models`)
     }
+
+    // PII Masking
+    async getPIIConfig() {
+        return this.request('/api/pii/config')
+    }
+
+    async testPIIMasking(text, language = 'en') {
+        return this.request('/api/pii/test', {
+            method: 'POST',
+            body: JSON.stringify({ text, language }),
+        })
+    }
+
+    async getPIIEntities() {
+        return this.request('/api/pii/entities')
+    }
+
+    // PII Model Management
+    async getNlpModels() {
+        return this.request('/api/pii/nlp-models')
+    }
+
+    async addNlpModel(data) {
+        return this.request('/api/pii/nlp-models', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        })
+    }
+
+    async deleteNlpModel(modelId) {
+        return this.request(`/api/pii/nlp-models/${modelId}`, {
+            method: 'DELETE',
+        })
+    }
+
+    async getRecognizers() {
+        return this.request('/api/pii/recognizers')
+    }
+
+    async createRecognizer(data) {
+        return this.request('/api/pii/recognizers', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        })
+    }
+
+    async updateRecognizer(recognizerId, data) {
+        return this.request(`/api/pii/recognizers/${recognizerId}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        })
+    }
+
+    async deleteRecognizer(recognizerId) {
+        return this.request(`/api/pii/recognizers/${recognizerId}`, {
+            method: 'DELETE',
+        })
+    }
+
+    async testPattern(pattern, text) {
+        return this.request('/api/pii/recognizers/test', {
+            method: 'POST',
+            body: JSON.stringify({ pattern, text }),
+        })
+    }
 }
 
 export const api = new ApiClient()
