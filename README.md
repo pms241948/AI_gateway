@@ -20,7 +20,7 @@ AI Gateway is a comprehensive LLM (Large Language Model) gateway solution design
 
 ### Key Features
 
-![Dashboard Overview](./dashboard_screenshot_1767531724148.png)
+![Dashboard Overview](docs/images/dashboard_screenshot.png)
 
 | Category | Features |
 |----------|----------|
@@ -181,7 +181,7 @@ curl -X POST http://localhost:8000/v1/embeddings \
 
 ### Organization Management
 
-![Join Requests Management](./join_requests_screenshot_1767531758439.png)
+![Join Requests Management](docs/images/join_requests_screenshot.png)
 
 - **Multi-Organization Support**: Users can belong to multiple organizations simultaneously
 - **Role-Based Access**: Admin, Member roles per organization

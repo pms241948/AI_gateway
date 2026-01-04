@@ -20,7 +20,7 @@ AI Gateway는 기업 환경을 위한 종합적인 LLM(Large Language Model) 게
 
 ### 주요 기능
 
-![대시보드 개요](./dashboard_screenshot_1767531724148.png)
+![대시보드 개요](docs/images/dashboard_screenshot.png)
 
 | 카테고리 | 기능 |
 |----------|------|
@@ -181,7 +181,7 @@ curl -X POST http://localhost:8000/v1/embeddings \
 
 ### 조직 관리
 
-![가입 요청 관리](./join_requests_screenshot_1767531758439.png)
+![가입 요청 관리](docs/images/join_requests_screenshot.png)
 
 - **다중 조직 지원**: 사용자가 여러 조직에 동시에 소속 가능
 - **역할 기반 접근**: 조직별 관리자, 멤버 역할
