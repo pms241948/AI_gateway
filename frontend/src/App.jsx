@@ -2174,14 +2174,48 @@ function GarakResultsViewer({ result, onClose, onDownload }) {
     const [activeTab, setActiveTab] = useState('overview')
     const [expandedProbe, setExpandedProbe] = useState(null)
 
+    // Categories aligned with backend SECURITY_PROBES
     const GARAK_CATEGORIES = {
-        prompt_injection: { name: 'Prompt Injection', icon: '💉', color: '#dc3545', description: '시스템 프롬프트 무력화 시도' },
-        jailbreak: { name: 'Jailbreak', icon: '🔓', color: '#fd7e14', description: '정책 우회 탈옥 시도' },
-        hallucination: { name: 'Hallucination', icon: '🌀', color: '#6f42c1', description: '사실 오류 및 허위 정보 생성' },
-        privacy: { name: 'Privacy', icon: '🔐', color: '#17a2b8', description: '개인정보 유출 및 추론' },
-        toxicity: { name: 'Toxicity', icon: '☠️', color: '#e83e8c', description: '유해 콘텐츠 생성' },
-        malware: { name: 'Malware/Misuse', icon: '🦠', color: '#343a40', description: '악성코드 및 악용 시나리오' },
-        robustness: { name: 'Robustness', icon: '💪', color: '#28a745', description: '모델 안정성 테스트' },
+        prompt_injection: {
+            name: 'Prompt Injection',
+            icon: '💉',
+            color: '#dc3545',
+            description: '프롬프트 주입 공격 테스트',
+            severity: 'high',
+            probes: ['ignore_instructions', 'system_prompt_leak', 'role_escape', 'instruction_override']
+        },
+        jailbreak: {
+            name: 'Jailbreak',
+            icon: '🔓',
+            color: '#fd7e14',
+            description: '안전 장치 우회 시도',
+            severity: 'critical',
+            probes: ['dan_prompt', 'pretend_mode', 'hypothetical_scenario']
+        },
+        data_leakage: {
+            name: 'Data Leakage',
+            icon: '🔐',
+            color: '#17a2b8',
+            description: '민감 정보 유출 테스트',
+            severity: 'high',
+            probes: ['training_data', 'internal_info', 'pii_extraction']
+        },
+        toxicity: {
+            name: 'Toxicity',
+            icon: '☠️',
+            color: '#e83e8c',
+            description: '유해 콘텐츠 생성 유도',
+            severity: 'medium',
+            probes: ['hate_speech', 'violence', 'profanity']
+        },
+        hallucination: {
+            name: 'Hallucination',
+            icon: '🌀',
+            color: '#6f42c1',
+            description: '허위 정보 생성 테스트',
+            severity: 'low',
+            probes: ['fake_citation', 'nonexistent_person', 'false_statistics']
+        },
     }
 
     const getSeverityColor = (severity) => {
@@ -2201,34 +2235,84 @@ function GarakResultsViewer({ result, onClose, onDownload }) {
         return '#28a745'
     }
 
-    // Parse detailed results into categories
+    // Parse detailed results into categories with proper counts
     const parseResults = () => {
         const detailedResults = result.detailed_results || {}
-        const probeResults = detailedResults.results || detailedResults.probes || []
+        const vulnerabilities = detailedResults.vulnerabilities || result.vulnerabilities || []
+        const categoriesTested = detailedResults.summary?.categories_tested || []
+        const scanType = detailedResults.scan_type || result.scan_type || 'quick'
 
+        // Initialize all categories with probes based on what was tested
         const categorized = {}
+        const categoryProbeCount = {}
+        const allProbes = []
+
         for (const cat of Object.keys(GARAK_CATEGORIES)) {
             categorized[cat] = []
+            categoryProbeCount[cat] = 0
         }
 
-        probeResults.forEach(probe => {
-            const probeName = probe.probe || probe.name || ''
-            const category = probeName.split('.')[0] || 'unknown'
-            if (categorized[category]) {
-                categorized[category].push(probe)
+        // Build probe info from vulnerabilities (failed probes)
+        const failedProbeMap = {}
+        vulnerabilities.forEach(vuln => {
+            const key = `${vuln.category}:${vuln.probe_name}`
+            failedProbeMap[key] = {
+                name: vuln.probe_name,
+                category: vuln.category,
+                severity: vuln.severity,
+                input: vuln.probe_input,
+                output: vuln.model_output,
+                reason: vuln.detection_reason,
+                recommendation: vuln.recommendation,
+                passed: false,
             }
         })
 
-        return categorized
+        // Generate all probes for tested categories
+        categoriesTested.forEach(cat => {
+            const catInfo = GARAK_CATEGORIES[cat]
+            if (!catInfo) return
+
+            // Determine which probes were tested based on scan type
+            const probeNames = scanType === 'quick'
+                ? catInfo.probes.slice(0, 2)  // Quick: first 2
+                : catInfo.probes              // Standard: all
+
+            categoryProbeCount[cat] = probeNames.length
+
+            probeNames.forEach(probeName => {
+                const key = `${cat}:${probeName}`
+                const failedInfo = failedProbeMap[key]
+
+                const probeInfo = failedInfo || {
+                    name: probeName,
+                    category: cat,
+                    severity: catInfo.severity,
+                    passed: true,
+                }
+
+                // Only failed probes go to categorized (for Categories tab table)
+                if (failedInfo) {
+                    categorized[cat].push(probeInfo)
+                }
+                // All probes go to allProbes (for Probes tab)
+                allProbes.push(probeInfo)
+            })
+        })
+
+        return { categorized, categoryProbeCount, categoriesTested, allProbes }
     }
 
-    const categorizedResults = parseResults()
+    const { categorized: categorizedResults, categoryProbeCount, categoriesTested, allProbes } = parseResults()
 
-    const summaryData = result.detailed_results?.summary || {
-        total_probes: result.total_probes || 0,
-        high_risk: result.critical_count + result.high_count || 0,
+    const summaryData = {
+        total_probes: result.total_probes || result.detailed_results?.summary?.total_probes || 0,
+        passed: result.passed_probes || result.detailed_results?.summary?.passed || 0,
+        failed: result.failed_probes || result.detailed_results?.summary?.failed || 0,
+        high_risk: (result.critical_count || 0) + (result.high_count || 0),
         medium_risk: result.medium_count || 0,
         low_risk: result.low_count || 0,
+        categories_tested: categoriesTested,
     }
 
     return (
@@ -2312,15 +2396,19 @@ function GarakResultsViewer({ result, onClose, onDownload }) {
                             <h4 style={{ marginBottom: 'var(--spacing-3)' }}>카테고리별 요약</h4>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--spacing-3)' }}>
                                 {Object.entries(GARAK_CATEGORIES).map(([key, cat]) => {
-                                    const probes = categorizedResults[key] || []
-                                    const failedCount = probes.filter(p => (p.failures || 0) > 0).length
+                                    const vulnerabilities = categorizedResults[key] || []
+                                    const totalProbes = categoryProbeCount[key] || 0
+                                    const failedCount = vulnerabilities.length
+                                    const passedCount = totalProbes - failedCount
+                                    const isTested = totalProbes > 0
+
                                     return (
                                         <div key={key} style={{
                                             padding: 'var(--spacing-3)',
                                             background: 'var(--color-bg)',
                                             borderRadius: '8px',
                                             borderLeft: `4px solid ${cat.color}`,
-                                            opacity: probes.length === 0 ? 0.5 : 1
+                                            opacity: isTested ? 1 : 0.4
                                         }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-2)' }}>
@@ -2331,10 +2419,16 @@ function GarakResultsViewer({ result, onClose, onDownload }) {
                                                     </div>
                                                 </div>
                                                 <div style={{ textAlign: 'right' }}>
-                                                    <div style={{ fontWeight: 'bold', color: failedCount > 0 ? '#dc3545' : '#28a745' }}>
-                                                        {failedCount}/{probes.length}
-                                                    </div>
-                                                    <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>실패</div>
+                                                    {isTested ? (
+                                                        <>
+                                                            <div style={{ fontWeight: 'bold', color: failedCount > 0 ? '#dc3545' : '#28a745' }}>
+                                                                {passedCount}/{totalProbes} ✓
+                                                            </div>
+                                                            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>통과</div>
+                                                        </>
+                                                    ) : (
+                                                        <div style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)' }}>미테스트</div>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
@@ -2348,8 +2442,13 @@ function GarakResultsViewer({ result, onClose, onDownload }) {
                     {activeTab === 'categories' && (
                         <div>
                             {Object.entries(GARAK_CATEGORIES).map(([key, cat]) => {
-                                const probes = categorizedResults[key] || []
-                                if (probes.length === 0) return null
+                                const totalProbes = categoryProbeCount[key] || 0
+                                const vulnerabilities = categorizedResults[key] || []
+                                if (totalProbes === 0) return null
+
+                                const passedCount = totalProbes - vulnerabilities.length
+                                const failedCount = vulnerabilities.length
+
                                 return (
                                     <div key={key} style={{ marginBottom: 'var(--spacing-4)' }}>
                                         <div style={{
@@ -2363,139 +2462,184 @@ function GarakResultsViewer({ result, onClose, onDownload }) {
                                         }}>
                                             <span style={{ fontSize: '1.5rem' }}>{cat.icon}</span>
                                             <h4 style={{ margin: 0, color: cat.color }}>{cat.name}</h4>
-                                            <span className="badge" style={{ background: cat.color }}>{probes.length} probes</span>
+                                            <span className="badge" style={{ background: '#28a745' }}>{passedCount} 통과</span>
+                                            {failedCount > 0 && <span className="badge" style={{ background: '#dc3545' }}>{failedCount} 실패</span>}
                                         </div>
-                                        <table className="table">
-                                            <thead>
-                                                <tr>
-                                                    <th>Probe</th>
-                                                    <th>Detector</th>
-                                                    <th>Attempts</th>
-                                                    <th>Failures</th>
-                                                    <th>Failure Rate</th>
-                                                    <th>Severity</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {probes.map((probe, i) => (
-                                                    <tr key={i}>
-                                                        <td><code>{probe.probe || probe.name}</code></td>
-                                                        <td>{probe.detector || '-'}</td>
-                                                        <td>{probe.attempts || 0}</td>
-                                                        <td style={{ color: (probe.failures || 0) > 0 ? '#dc3545' : '#28a745' }}>{probe.failures || 0}</td>
-                                                        <td>
-                                                            <div style={{
-                                                                display: 'inline-block',
-                                                                padding: '2px 8px',
-                                                                borderRadius: '4px',
-                                                                background: getFailureRateColor(probe.failure_rate || 0) + '20',
-                                                                color: getFailureRateColor(probe.failure_rate || 0)
-                                                            }}>
-                                                                {((probe.failure_rate || 0) * 100).toFixed(1)}%
-                                                            </div>
-                                                        </td>
-                                                        <td>
-                                                            <span className="badge" style={{ background: getSeverityColor(probe.severity), color: '#fff' }}>
-                                                                {probe.severity || 'unknown'}
-                                                            </span>
-                                                        </td>
+
+                                        {failedCount > 0 ? (
+                                            <table className="table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Probe</th>
+                                                        <th>상태</th>
+                                                        <th>심각도</th>
+                                                        <th>탐지 이유</th>
                                                     </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
+                                                </thead>
+                                                <tbody>
+                                                    {vulnerabilities.map((vuln, i) => (
+                                                        <tr key={i}>
+                                                            <td><code>{vuln.name}</code></td>
+                                                            <td><span className="badge" style={{ background: '#dc3545' }}>실패</span></td>
+                                                            <td>
+                                                                <span className="badge" style={{ background: getSeverityColor(vuln.severity), color: '#fff' }}>
+                                                                    {vuln.severity}
+                                                                </span>
+                                                            </td>
+                                                            <td style={{ fontSize: 'var(--font-size-sm)' }}>{vuln.reason}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        ) : (
+                                            <div style={{
+                                                padding: 'var(--spacing-3)',
+                                                background: 'var(--color-bg)',
+                                                borderRadius: '8px',
+                                                textAlign: 'center',
+                                                color: '#28a745'
+                                            }}>
+                                                ✅ 모든 {totalProbes}개 테스트 통과
+                                            </div>
+                                        )}
                                     </div>
                                 )
                             })}
+
+                            {Object.values(categoryProbeCount).every(v => v === 0) && (
+                                <div style={{ textAlign: 'center', padding: 'var(--spacing-4)', color: 'var(--color-text-muted)' }}>
+                                    테스트된 카테고리가 없습니다.
+                                </div>
+                            )}
                         </div>
                     )}
 
                     {/* Probes Tab */}
                     {activeTab === 'probes' && (
                         <div>
-                            {Object.entries(categorizedResults).flatMap(([cat, probes]) =>
-                                probes.map((probe, i) => (
-                                    <div key={`${cat}-${i}`} style={{
-                                        marginBottom: 'var(--spacing-3)',
-                                        border: '1px solid var(--color-border)',
-                                        borderRadius: '8px',
-                                        overflow: 'hidden'
-                                    }}>
-                                        <div
-                                            style={{
-                                                padding: 'var(--spacing-3)',
-                                                background: 'var(--color-bg)',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                justifyContent: 'space-between',
-                                                alignItems: 'center'
-                                            }}
-                                            onClick={() => setExpandedProbe(expandedProbe === `${cat}-${i}` ? null : `${cat}-${i}`)}
-                                        >
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-3)' }}>
-                                                <span>{expandedProbe === `${cat}-${i}` ? '▼' : '▶'}</span>
-                                                <code style={{ fontWeight: 600 }}>{probe.probe || probe.name}</code>
-                                                <span className="badge" style={{ background: getSeverityColor(probe.severity) }}>{probe.severity}</span>
-                                            </div>
-                                            <div style={{ display: 'flex', gap: 'var(--spacing-3)', alignItems: 'center' }}>
-                                                <span style={{ color: (probe.failures || 0) > 0 ? '#dc3545' : '#28a745' }}>
-                                                    {probe.failures || 0}/{probe.attempts || 0} failures
-                                                </span>
-                                                <span style={{
-                                                    padding: '2px 8px',
-                                                    borderRadius: '4px',
-                                                    background: getFailureRateColor(probe.failure_rate || 0),
-                                                    color: '#fff'
-                                                }}>
-                                                    {((probe.failure_rate || 0) * 100).toFixed(1)}%
-                                                </span>
-                                            </div>
-                                        </div>
+                            {allProbes.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: 'var(--spacing-4)', color: 'var(--color-text-muted)' }}>
+                                    테스트된 프로브가 없습니다.
+                                </div>
+                            ) : (
+                                allProbes.map((probe, i) => {
+                                    const catInfo = GARAK_CATEGORIES[probe.category] || { name: probe.category, icon: '📋', color: '#6c757d' }
+                                    const probeKey = `${probe.category}-${probe.name}-${i}`
+                                    const isExpanded = expandedProbe === probeKey
+                                    const isPassed = probe.passed !== false
 
-                                        {expandedProbe === `${cat}-${i}` && probe.details && (
-                                            <div style={{ padding: 'var(--spacing-3)', borderTop: '1px solid var(--color-border)' }}>
-                                                <h5>상세 결과</h5>
-                                                {probe.details.map((detail, j) => (
-                                                    <div key={j} style={{
-                                                        marginBottom: 'var(--spacing-2)',
-                                                        padding: 'var(--spacing-2)',
-                                                        background: 'var(--color-bg)',
-                                                        borderRadius: '4px',
-                                                        fontSize: 'var(--font-size-sm)'
-                                                    }}>
-                                                        <div><strong>Prompt:</strong> {detail.prompt}</div>
-                                                        <div style={{ marginTop: 'var(--spacing-1)' }}><strong>Response:</strong> {detail.response}</div>
-                                                        {detail.detected_issue && (
-                                                            <div style={{ marginTop: 'var(--spacing-1)', color: '#dc3545' }}>
-                                                                <strong>Issue:</strong> {detail.detected_issue} (confidence: {(detail.confidence * 100).toFixed(0)}%)
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                ))}
+                                    return (
+                                        <div key={probeKey} style={{
+                                            marginBottom: 'var(--spacing-2)',
+                                            border: '1px solid var(--color-border)',
+                                            borderRadius: '8px',
+                                            borderLeft: `4px solid ${isPassed ? '#28a745' : '#dc3545'}`,
+                                            overflow: 'hidden'
+                                        }}>
+                                            <div
+                                                style={{
+                                                    padding: 'var(--spacing-3)',
+                                                    background: 'var(--color-bg)',
+                                                    cursor: isPassed ? 'default' : 'pointer',
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    alignItems: 'center'
+                                                }}
+                                                onClick={() => !isPassed && setExpandedProbe(isExpanded ? null : probeKey)}
+                                            >
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-2)' }}>
+                                                    {!isPassed && <span>{isExpanded ? '▼' : '▶'}</span>}
+                                                    <span style={{ fontSize: '1.2rem' }}>{catInfo.icon}</span>
+                                                    <code style={{ fontWeight: 600 }}>{probe.name}</code>
+                                                    <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)' }}>
+                                                        ({catInfo.name})
+                                                    </span>
+                                                </div>
+                                                <div style={{ display: 'flex', gap: 'var(--spacing-2)', alignItems: 'center' }}>
+                                                    {isPassed ? (
+                                                        <span className="badge" style={{ background: '#28a745' }}>✓ 통과</span>
+                                                    ) : (
+                                                        <>
+                                                            <span className="badge" style={{ background: '#dc3545' }}>✗ 실패</span>
+                                                            <span className="badge" style={{ background: getSeverityColor(probe.severity), color: '#fff' }}>
+                                                                {probe.severity}
+                                                            </span>
+                                                        </>
+                                                    )}
+                                                </div>
                                             </div>
-                                        )}
-                                    </div>
-                                ))
+
+                                            {!isPassed && isExpanded && (
+                                                <div style={{ padding: 'var(--spacing-3)', borderTop: '1px solid var(--color-border)' }}>
+                                                    {probe.reason && (
+                                                        <div style={{ marginBottom: 'var(--spacing-2)' }}>
+                                                            <strong>탐지 이유:</strong> {probe.reason}
+                                                        </div>
+                                                    )}
+                                                    {probe.input && (
+                                                        <div style={{ marginBottom: 'var(--spacing-2)' }}>
+                                                            <strong>입력 프롬프트:</strong>
+                                                            <pre style={{
+                                                                background: '#f8f9fa',
+                                                                padding: 'var(--spacing-2)',
+                                                                borderRadius: '4px',
+                                                                whiteSpace: 'pre-wrap',
+                                                                fontSize: 'var(--font-size-sm)'
+                                                            }}>{probe.input}</pre>
+                                                        </div>
+                                                    )}
+                                                    {probe.output && (
+                                                        <div style={{ marginBottom: 'var(--spacing-2)' }}>
+                                                            <strong>모델 응답:</strong>
+                                                            <pre style={{
+                                                                background: '#f8f9fa',
+                                                                padding: 'var(--spacing-2)',
+                                                                borderRadius: '4px',
+                                                                whiteSpace: 'pre-wrap',
+                                                                fontSize: 'var(--font-size-sm)',
+                                                                color: '#dc3545'
+                                                            }}>{probe.output}</pre>
+                                                        </div>
+                                                    )}
+                                                    {probe.recommendation && (
+                                                        <div style={{
+                                                            padding: 'var(--spacing-2)',
+                                                            background: '#e7f5ff',
+                                                            borderRadius: '4px',
+                                                            color: '#0c5460'
+                                                        }}>
+                                                            <strong>💡 권장사항:</strong> {probe.recommendation}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )
+                                })
                             )}
                         </div>
                     )}
 
+
                     {/* Raw JSON Tab */}
-                    {activeTab === 'raw' && (
-                        <pre style={{
-                            background: '#1e1e1e',
-                            color: '#d4d4d4',
-                            padding: 'var(--spacing-3)',
-                            borderRadius: '8px',
-                            overflow: 'auto',
-                            fontSize: 'var(--font-size-sm)',
-                            maxHeight: '500px'
-                        }}>
-                            {JSON.stringify(result.detailed_results || result, null, 2)}
-                        </pre>
-                    )}
-                </div>
-            </div>
-        </div>
+                    {
+                        activeTab === 'raw' && (
+                            <pre style={{
+                                background: '#1e1e1e',
+                                color: '#d4d4d4',
+                                padding: 'var(--spacing-3)',
+                                borderRadius: '8px',
+                                overflow: 'auto',
+                                fontSize: 'var(--font-size-sm)',
+                                maxHeight: '500px'
+                            }}>
+                                {JSON.stringify(result.detailed_results || result, null, 2)}
+                            </pre>
+                        )
+                    }
+                </div >
+            </div >
+        </div >
     )
 }
 
@@ -2506,7 +2650,7 @@ function SecurityScanPage() {
     const [scanResults, setScanResults] = useState([])
     const [selectedModel, setSelectedModel] = useState('')
     const [scanType, setScanType] = useState('quick')
-    const [scanEngine, setScanEngine] = useState('builtin')  // 'builtin' or 'garak'
+    const [scanEngine, setScanEngine] = useState('')  // '' or 'garak'
     const [scanning, setScanning] = useState(false)
     const [currentScan, setCurrentScan] = useState(null)
     const [selectedResult, setSelectedResult] = useState(null)
@@ -2529,6 +2673,18 @@ function SecurityScanPage() {
             setCategories(categoriesData || [])
             setScanResults(resultsData || [])
             setGarakStatus(garakData)
+
+            // Auto-display the most recent scan result
+            if (resultsData && resultsData.length > 0) {
+                const lastScan = resultsData[0]  // Results are ordered by created_at desc
+                // Fetch full details of the last scan
+                try {
+                    const fullResult = await api.getScanResult(lastScan.id)
+                    setCurrentScan(fullResult)
+                } catch (err) {
+                    console.log('Could not load last scan details')
+                }
+            }
         } catch (err) {
             console.error('Failed to load security scan data:', err)
         } finally {
@@ -2627,7 +2783,7 @@ function SecurityScanPage() {
                         <p style={{ margin: 'var(--spacing-2) 0 0 0', opacity: 0.8, fontSize: 'var(--font-size-sm)' }}>
                             {garakStatus?.available
                                 ? `v${garakStatus.version} - 60+ 보안 프로브로 종합적인 취약점 분석`
-                                : 'Garak이 설치되지 않았습니다. 기본 스캐너를 사용합니다.'}
+                                : 'Garak이 설치되지 않았습니다. 스캔을 실행하려면 Garak 컨테이너를 시작해주세요.'}
                         </p>
                     </div>
                     {garakStatus?.available && (
@@ -2664,7 +2820,7 @@ function SecurityScanPage() {
                             onChange={(e) => setScanEngine(e.target.value)}
                             disabled={scanning}
                         >
-                            <option value="builtin">기본 스캐너</option>
+                            <option value="">-- 스캔 엔진 선택 --</option>
                             <option value="garak" disabled={!garakStatus?.available}>
                                 Garak {garakStatus?.available ? `(v${garakStatus.version})` : '(미설치)'}
                             </option>
@@ -2685,7 +2841,7 @@ function SecurityScanPage() {
                     <button
                         className="btn btn-primary"
                         onClick={handleStartScan}
-                        disabled={scanning || !selectedModel}
+                        disabled={scanning || !selectedModel || !scanEngine}
                     >
                         {scanning ? '스캔 중...' : '🔍 스캔 시작'}
                     </button>
@@ -2794,11 +2950,11 @@ function SecurityScanPage() {
                                     <th>점수</th>
                                     <th>취약점</th>
                                     <th>날짜</th>
-                                    <th>액션</th>
+                                    <th>상세</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {scanResults.map(scan => (
+                                {scanResults.slice(0, 10).map(scan => (
                                     <tr key={scan.id}>
                                         <td>{scan.model_alias}</td>
                                         <td><span className="badge badge-secondary">{scan.scan_type}</span></td>
@@ -2826,14 +2982,17 @@ function SecurityScanPage() {
                                                     }}
                                                     title="상세 보기"
                                                 >
-                                                    👁️
+                                                    📋
                                                 </button>
                                                 {scan.status === 'completed' && (
                                                     <button
                                                         className="btn btn-sm btn-secondary"
-                                                        onClick={() => {
-                                                            const url = api.downloadScanResult(scan.id)
-                                                            window.open(url, '_blank')
+                                                        onClick={async () => {
+                                                            try {
+                                                                await api.downloadScanResult(scan.id)
+                                                            } catch (err) {
+                                                                alert('다운로드 실패: ' + err.message)
+                                                            }
                                                         }}
                                                         title="결과 다운로드"
                                                     >
@@ -2855,9 +3014,12 @@ function SecurityScanPage() {
                 <GarakResultsViewer
                     result={selectedResult}
                     onClose={() => setSelectedResult(null)}
-                    onDownload={() => {
-                        const url = api.downloadScanResult(selectedResult.id)
-                        window.open(url, '_blank')
+                    onDownload={async () => {
+                        try {
+                            await api.downloadScanResult(selectedResult.id)
+                        } catch (err) {
+                            alert('다운로드 실패: ' + err.message)
+                        }
                     }}
                 />
             )}

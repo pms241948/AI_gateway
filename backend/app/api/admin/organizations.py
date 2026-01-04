@@ -52,6 +52,116 @@ async def list_organizations(
     return result.scalars().all()
 
 
+@router.get("/available")
+async def list_available_organizations(
+    db: AsyncSession = Depends(get_db),
+):
+    """List all active organizations available for joining (public endpoint)."""
+    result = await db.execute(
+        select(Organization)
+        .where(Organization.is_active == True)
+        .order_by(Organization.name)
+    )
+    orgs = result.scalars().all()
+    
+    return [
+        {
+            "id": str(org.id),
+            "name": org.name,
+            "description": org.description,
+        }
+        for org in orgs
+    ]
+
+
+@router.get("/my-join-requests")
+async def list_my_join_requests(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List my organization join requests."""
+    from app.models.org_request import OrgJoinRequest
+    result = await db.execute(
+        select(OrgJoinRequest, Organization).join(
+            Organization, OrgJoinRequest.organization_id == Organization.id
+        ).where(
+            OrgJoinRequest.user_id == current_user.id
+        ).order_by(OrgJoinRequest.created_at.desc())
+    )
+    requests = result.all()
+    
+    return [
+        {
+            "id": str(req.id),
+            "organization_id": str(org.id),
+            "organization_name": org.name,
+            "request_reason": req.request_reason,
+            "status": req.status.value,
+            "response_note": req.response_note,
+            "created_at": req.created_at.isoformat(),
+            "reviewed_at": req.reviewed_at.isoformat() if req.reviewed_at else None,
+        }
+        for req, org in requests
+    ]
+
+
+@router.post("/skip-organization")
+async def skip_organization_selection(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark user as having skipped organization selection (independent user)."""
+    return {"message": "You've chosen to continue as an independent user", "organization_id": None}
+
+
+@router.get("/user-status")
+async def get_user_organization_status(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current user's organization status."""
+    from app.models.org_request import OrgJoinRequest, JoinRequestStatus
+    has_pending_request = False
+    pending_org_name = None
+    
+    # Check for pending join requests
+    result = await db.execute(
+        select(OrgJoinRequest, Organization).join(
+            Organization, OrgJoinRequest.organization_id == Organization.id
+        ).where(
+            and_(
+                OrgJoinRequest.user_id == current_user.id,
+                OrgJoinRequest.status == JoinRequestStatus.PENDING
+            )
+        ).limit(1)
+    )
+    pending = result.first()
+    if pending:
+        has_pending_request = True
+        pending_org_name = pending[1].name
+    
+    # Get current organization if any
+    org_name = None
+    is_org_admin_flag = False
+    if current_user.organization_id:
+        result = await db.execute(
+            select(Organization).where(Organization.id == current_user.organization_id)
+        )
+        org = result.scalar_one_or_none()
+        if org:
+            org_name = org.name
+            is_org_admin_flag = await is_org_admin(current_user, current_user.organization_id, db)
+    
+    return {
+        "has_organization": current_user.organization_id is not None,
+        "organization_id": str(current_user.organization_id) if current_user.organization_id else None,
+        "organization_name": org_name,
+        "is_org_admin": is_org_admin_flag,
+        "has_pending_request": has_pending_request,
+        "pending_org_name": pending_org_name,
+    }
+
+
 @router.post("", response_model=OrganizationResponse)
 async def create_organization(
     org_data: OrganizationCreate,
@@ -526,26 +636,6 @@ class JoinReviewRequest(BaseModel):
     response_note: str = None
 
 
-@router.get("/available")
-async def list_available_organizations(
-    db: AsyncSession = Depends(get_db),
-):
-    """List all active organizations available for joining (public endpoint)."""
-    result = await db.execute(
-        select(Organization)
-        .where(Organization.is_active == True)
-        .order_by(Organization.name)
-    )
-    orgs = result.scalars().all()
-    
-    return [
-        {
-            "id": str(org.id),
-            "name": org.name,
-            "description": org.description,
-        }
-        for org in orgs
-    ]
 
 
 @router.post("/{org_id}/join")

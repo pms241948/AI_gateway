@@ -409,9 +409,29 @@ class ApiClient {
         })
     }
 
-    downloadScanResult(scanId) {
-        // Return download URL directly
-        return `${this.baseUrl}/api/security/scan/${scanId}/download`
+    async downloadScanResult(scanId) {
+        // Fetch with auth token and trigger download
+        const token = localStorage.getItem('access_token')
+        const response = await fetch(`${this.baseUrl}/api/security/scan/${scanId}/download`, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+            },
+        })
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: { message: 'Download failed' } }))
+            throw new Error(error.error?.message || 'Download failed')
+        }
+
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `scan_result_${scanId}.json`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(url)
     }
 
     // Model Access Request Workflow

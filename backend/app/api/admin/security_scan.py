@@ -22,6 +22,9 @@ from app.services.security_scan import get_security_scan_service
 
 router = APIRouter(prefix="/security", tags=["Security Scan"])
 
+# Store running background tasks to prevent garbage collection
+_running_scan_tasks = set()
+
 
 # ============================================================================
 # Schemas
@@ -59,6 +62,7 @@ class ScanResultResponse(BaseModel):
     completed_at: Optional[datetime]
     error_message: Optional[str]
     vulnerabilities: List[VulnerabilityResponse] = []
+    detailed_results: Optional[dict] = None  # Full scan results including categories_tested
 
 
 class ScanSummaryResponse(BaseModel):
@@ -196,12 +200,20 @@ async def run_scan_background(
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"[SCAN] Background task started for scan_id={scan_id}")
+    print(f"[SCAN] Background task started for scan_id={scan_id}", flush=True)
     
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
     from sqlalchemy.orm import sessionmaker
     
+    # Ensure we use asyncpg driver for async operations
+    async_db_url = db_url
+    if "postgresql://" in db_url and "+asyncpg" not in db_url:
+        async_db_url = db_url.replace("postgresql://", "postgresql+asyncpg://")
+    elif "postgresql+psycopg2" in db_url:
+        async_db_url = db_url.replace("postgresql+psycopg2", "postgresql+asyncpg")
+    
     try:
-        engine = create_async_engine(db_url)
+        engine = create_async_engine(async_db_url)
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         
         async with async_session() as db:
@@ -334,6 +346,7 @@ async def start_security_scan(
     db: AsyncSession = Depends(get_db),
 ):
     """Start a security scan for a model."""
+    print(f"[SCAN-API] start_security_scan called for model_id={model_id}", flush=True)
     # Get model
     result = await db.execute(select(LLMModel).where(LLMModel.id == model_id))
     model = result.scalar_one_or_none()
@@ -386,22 +399,27 @@ async def start_security_scan(
     import logging
     logger = logging.getLogger(__name__)
     logger.info(f"[SCAN] Creating background task for scan_id={scan_result.id}")
-    print(f"[SCAN] Creating background task for scan_id={scan_result.id}")
+    print(f"[SCAN] Creating background task for scan_id={scan_result.id}", flush=True)
     
     task = asyncio.create_task(run_scan_background(
         scan_result.id,
         model.alias,
         model.id,
         provider.provider_type,
-        provider.api_base_url,
-        provider.api_key,
+        provider.base_url,
+        provider.auth_credentials_encrypted,
         endpoint.provider_model_name,
         request.scan_type,
         request.categories,
         db_url,
     ))
-    logger.info(f"[SCAN] Background task created: {task}")
-    print(f"[SCAN] Background task created: {task}")
+    
+    # Store task reference to prevent garbage collection
+    _running_scan_tasks.add(task)
+    task.add_done_callback(lambda t: _running_scan_tasks.discard(t))
+    
+    logger.info(f"[SCAN] Background task created and stored: {task}")
+    print(f"[SCAN] Background task created and stored: {task}", flush=True)
     
     return {
         "scan_id": str(scan_result.id),
@@ -461,6 +479,7 @@ async def get_scan_result(
             )
             for v in vulnerabilities
         ],
+        detailed_results=scan.detailed_results,
     )
 
 
