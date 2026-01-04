@@ -105,6 +105,71 @@ async def list_my_join_requests(
     ]
 
 
+@router.get("/managed-join-requests")
+async def list_managed_join_requests(
+    status: str = None,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List join requests from all organizations where current user is admin."""
+    from app.models.org_request import OrgJoinRequest, JoinRequestStatus
+    
+    # Get all organizations where user is admin
+    result = await db.execute(
+        select(OrganizationMember).where(
+            and_(
+                OrganizationMember.user_id == current_user.id,
+                OrganizationMember.is_admin == True
+            )
+        )
+    )
+    admin_memberships = result.scalars().all()
+    admin_org_ids = [m.organization_id for m in admin_memberships]
+    
+    # Also include if user is superuser (they can manage all)
+    if current_user.is_superuser:
+        result = await db.execute(select(Organization.id))
+        admin_org_ids = [row[0] for row in result.all()]
+    
+    if not admin_org_ids:
+        return []
+    
+    # Get join requests for these organizations
+    from sqlalchemy import or_
+    query = select(OrgJoinRequest, User, Organization).join(
+        User, OrgJoinRequest.user_id == User.id
+    ).join(
+        Organization, OrgJoinRequest.organization_id == Organization.id
+    ).where(
+        OrgJoinRequest.organization_id.in_(admin_org_ids)
+    )
+    
+    if status:
+        query = query.where(OrgJoinRequest.status == JoinRequestStatus(status))
+    
+    query = query.order_by(OrgJoinRequest.created_at.desc())
+    
+    result = await db.execute(query)
+    rows = result.all()
+    
+    return [
+        {
+            "id": str(req.id),
+            "organization_id": str(org.id),
+            "organization_name": org.name,
+            "user_id": str(user.id),
+            "user_email": user.email,
+            "user_username": user.username,
+            "request_reason": req.request_reason,
+            "status": req.status.value,
+            "response_note": req.response_note,
+            "created_at": req.created_at.isoformat(),
+            "reviewed_at": req.reviewed_at.isoformat() if req.reviewed_at else None,
+        }
+        for req, user, org in rows
+    ]
+
+
 @router.post("/skip-organization")
 async def skip_organization_selection(
     current_user: User = Depends(get_current_active_user),
@@ -114,15 +179,67 @@ async def skip_organization_selection(
     return {"message": "You've chosen to continue as an independent user", "organization_id": None}
 
 
+@router.put("/set-default/{org_id}")
+async def set_default_organization(
+    org_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set an organization as the user's default organization."""
+    # Check if user is a member of this organization
+    result = await db.execute(
+        select(OrganizationMember).where(
+            and_(
+                OrganizationMember.organization_id == org_id,
+                OrganizationMember.user_id == current_user.id
+            )
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="You are not a member of this organization")
+    
+    # Get organization name for response
+    result = await db.execute(select(Organization).where(Organization.id == org_id))
+    org = result.scalar_one_or_none()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    # Update user's default organization
+    result = await db.execute(select(User).where(User.id == current_user.id))
+    user = result.scalar_one_or_none()
+    user.organization_id = org_id
+    
+    await db.commit()
+    
+    return {"message": f"'{org.name}' 이(가) 기본 조직으로 설정되었습니다.", "organization_id": str(org_id)}
+
+
 @router.get("/user-status")
 async def get_user_organization_status(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get current user's organization status."""
+    """Get current user's organization status including all memberships."""
     from app.models.org_request import OrgJoinRequest, JoinRequestStatus
-    has_pending_request = False
-    pending_org_name = None
+    
+    # Get all organization memberships for this user
+    result = await db.execute(
+        select(OrganizationMember, Organization)
+        .join(Organization, OrganizationMember.organization_id == Organization.id)
+        .where(OrganizationMember.user_id == current_user.id)
+        .order_by(Organization.name)
+    )
+    membership_rows = result.all()
+    
+    memberships = [
+        {
+            "organization_id": str(org.id),
+            "organization_name": org.name,
+            "is_admin": membership.is_admin,
+            "role": "관리자" if membership.is_admin else "멤버",
+        }
+        for membership, org in membership_rows
+    ]
     
     # Check for pending join requests
     result = await db.execute(
@@ -133,33 +250,39 @@ async def get_user_organization_status(
                 OrgJoinRequest.user_id == current_user.id,
                 OrgJoinRequest.status == JoinRequestStatus.PENDING
             )
-        ).limit(1)
+        )
     )
-    pending = result.first()
-    if pending:
-        has_pending_request = True
-        pending_org_name = pending[1].name
+    pending_requests = [
+        {
+            "organization_id": str(org.id),
+            "organization_name": org.name,
+        }
+        for req, org in result.all()
+    ]
     
-    # Get current organization if any
-    org_name = None
-    is_org_admin_flag = False
+    # Default organization info (for backwards compatibility)
+    default_org_name = None
+    is_default_org_admin = False
     if current_user.organization_id:
         result = await db.execute(
             select(Organization).where(Organization.id == current_user.organization_id)
         )
         org = result.scalar_one_or_none()
         if org:
-            org_name = org.name
-            is_org_admin_flag = await is_org_admin(current_user, current_user.organization_id, db)
+            default_org_name = org.name
+            is_default_org_admin = await is_org_admin(current_user, current_user.organization_id, db)
     
     return {
-        "has_organization": current_user.organization_id is not None,
+        "has_organization": len(memberships) > 0,
         "organization_id": str(current_user.organization_id) if current_user.organization_id else None,
-        "organization_name": org_name,
-        "is_org_admin": is_org_admin_flag,
-        "has_pending_request": has_pending_request,
-        "pending_org_name": pending_org_name,
+        "organization_name": default_org_name,
+        "is_org_admin": is_default_org_admin,
+        "memberships": memberships,  # All organization memberships
+        "pending_requests": pending_requests,  # All pending join requests
+        "has_pending_request": len(pending_requests) > 0,
+        "pending_org_name": pending_requests[0]["organization_name"] if pending_requests else None,
     }
+
 
 
 @router.post("", response_model=OrganizationResponse)
@@ -397,34 +520,24 @@ async def list_organization_members(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Organization not found")
     
-    # Get all users in this organization
+    # Get all members via OrganizationMember (supports multi-org membership)
     result = await db.execute(
-        select(User)
-        .where(User.organization_id == org_id)
+        select(User, OrganizationMember)
+        .join(OrganizationMember, User.id == OrganizationMember.user_id)
+        .where(OrganizationMember.organization_id == org_id)
         .order_by(User.username)
     )
-    users = result.scalars().all()
+    rows = result.all()
     
-    # Get org admin status for each user
     members = []
-    for user in users:
-        admin_result = await db.execute(
-            select(OrganizationMember).where(
-                and_(
-                    OrganizationMember.organization_id == org_id,
-                    OrganizationMember.user_id == user.id
-                )
-            )
-        )
-        membership = admin_result.scalar_one_or_none()
-        
+    for user, membership in rows:
         members.append({
             "id": str(user.id),
             "username": user.username,
             "email": user.email,
             "is_active": user.is_active,
             "group_id": str(user.group_id) if user.group_id else None,
-            "is_org_admin": membership.is_admin if membership else False,
+            "is_org_admin": membership.is_admin,
         })
     
     return members
@@ -496,23 +609,7 @@ async def remove_member_from_organization(
     if not await is_org_admin(current_user, org_id, db):
         raise HTTPException(status_code=403, detail="Not authorized to manage this organization")
     
-    # Get the user
-    result = await db.execute(
-        select(User).where(User.id == user_id)
-    )
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    if user.organization_id != org_id:
-        raise HTTPException(status_code=400, detail="User is not a member of this organization")
-    
-    # Remove user from organization
-    user.organization_id = None
-    user.group_id = None
-    
-    # Remove membership record
+    # Check membership exists
     result = await db.execute(
         select(OrganizationMember).where(
             and_(
@@ -522,8 +619,24 @@ async def remove_member_from_organization(
         )
     )
     membership = result.scalar_one_or_none()
-    if membership:
-        await db.delete(membership)
+    
+    if not membership:
+        raise HTTPException(status_code=400, detail="User is not a member of this organization")
+    
+    # Get the user
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Clear default org only if this org was the default
+    if user.organization_id == org_id:
+        user.organization_id = None
+        user.group_id = None
+    
+    # Remove membership record
+    await db.delete(membership)
     
     await db.commit()
     
@@ -539,19 +652,7 @@ async def set_member_admin_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Set or remove org admin status for a user (superuser only)."""
-    # Verify user is a member
-    result = await db.execute(
-        select(User).where(User.id == user_id)
-    )
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    if user.organization_id != org_id:
-        raise HTTPException(status_code=400, detail="User is not a member of this organization")
-    
-    # Get or create membership record
+    # Get membership record (check if user is member of this org)
     result = await db.execute(
         select(OrganizationMember).where(
             and_(
@@ -562,15 +663,18 @@ async def set_member_admin_status(
     )
     membership = result.scalar_one_or_none()
     
-    if membership:
-        membership.is_admin = is_admin
-    else:
-        membership = OrganizationMember(
-            organization_id=org_id,
-            user_id=user_id,
-            is_admin=is_admin
-        )
-        db.add(membership)
+    if not membership:
+        raise HTTPException(status_code=400, detail="User is not a member of this organization")
+    
+    # Get user for response message
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Update admin status
+    membership.is_admin = is_admin
     
     await db.commit()
     
@@ -656,9 +760,17 @@ async def request_to_join_organization(
     if not org.is_active:
         raise HTTPException(status_code=400, detail="Organization is not active")
     
-    # Check if user already belongs to an organization
-    if current_user.organization_id:
-        raise HTTPException(status_code=400, detail="You already belong to an organization")
+    # Check if user is already a member of THIS organization
+    result = await db.execute(
+        select(OrganizationMember).where(
+            and_(
+                OrganizationMember.organization_id == org_id,
+                OrganizationMember.user_id == current_user.id
+            )
+        )
+    )
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="You are already a member of this organization")
     
     # Check if already has pending request for this org
     result = await db.execute(
@@ -731,36 +843,6 @@ async def list_organization_join_requests(
     ]
 
 
-@router.get("/my-join-requests")
-async def list_my_join_requests(
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """List my organization join requests."""
-    result = await db.execute(
-        select(OrgJoinRequest, Organization).join(
-            Organization, OrgJoinRequest.organization_id == Organization.id
-        ).where(
-            OrgJoinRequest.user_id == current_user.id
-        ).order_by(OrgJoinRequest.created_at.desc())
-    )
-    requests = result.all()
-    
-    return [
-        {
-            "id": str(req.id),
-            "organization_id": str(org.id),
-            "organization_name": org.name,
-            "request_reason": req.request_reason,
-            "status": req.status.value,
-            "response_note": req.response_note,
-            "created_at": req.created_at.isoformat(),
-            "reviewed_at": req.reviewed_at.isoformat() if req.reviewed_at else None,
-        }
-        for req, org in requests
-    ]
-
-
 @router.put("/join-requests/{request_id}/approve")
 async def approve_join_request(
     request_id: UUID,
@@ -797,7 +879,9 @@ async def approve_join_request(
     user = result.scalar_one_or_none()
     
     if user:
-        user.organization_id = join_request.organization_id
+        # Set as default organization only if user has no org yet (first membership)
+        if not user.organization_id:
+            user.organization_id = join_request.organization_id
         
         # Create membership record
         result = await db.execute(
@@ -857,61 +941,3 @@ async def reject_join_request(
     return {"message": "Join request rejected", "status": "rejected"}
 
 
-@router.post("/skip-organization")
-async def skip_organization_selection(
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Mark user as having skipped organization selection (independent user)."""
-    # Set a flag that user explicitly chose to be independent
-    # We'll use settings JSONB field on organization table or a user flag
-    # For simplicity, we just return success - user stays without organization
-    
-    return {"message": "You've chosen to continue as an independent user", "organization_id": None}
-
-
-@router.get("/user-status")
-async def get_user_organization_status(
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get current user's organization status."""
-    has_pending_request = False
-    pending_org_name = None
-    
-    # Check for pending join requests
-    result = await db.execute(
-        select(OrgJoinRequest, Organization).join(
-            Organization, OrgJoinRequest.organization_id == Organization.id
-        ).where(
-            and_(
-                OrgJoinRequest.user_id == current_user.id,
-                OrgJoinRequest.status == JoinRequestStatus.PENDING
-            )
-        ).limit(1)
-    )
-    pending = result.first()
-    if pending:
-        has_pending_request = True
-        pending_org_name = pending[1].name
-    
-    # Get current organization if any
-    org_name = None
-    is_org_admin_flag = False
-    if current_user.organization_id:
-        result = await db.execute(
-            select(Organization).where(Organization.id == current_user.organization_id)
-        )
-        org = result.scalar_one_or_none()
-        if org:
-            org_name = org.name
-            is_org_admin_flag = await is_org_admin(current_user, current_user.organization_id, db)
-    
-    return {
-        "has_organization": current_user.organization_id is not None,
-        "organization_id": str(current_user.organization_id) if current_user.organization_id else None,
-        "organization_name": org_name,
-        "is_org_admin": is_org_admin_flag,
-        "has_pending_request": has_pending_request,
-        "pending_org_name": pending_org_name,
-    }

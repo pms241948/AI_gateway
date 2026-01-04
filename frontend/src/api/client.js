@@ -494,23 +494,34 @@ class ApiClient {
         return this.request(`/api/organizations/${orgId}/join-requests${params}`)
     }
 
-    async approveJoinRequest(requestId, responseNote = null) {
+    async getManagedJoinRequests(status = null) {
+        const params = status ? `?status=${status}` : ''
+        return this.request(`/api/organizations/managed-join-requests${params}`)
+    }
+
+    async approveJoinRequest(requestId, responseNote = '') {
         return this.request(`/api/organizations/join-requests/${requestId}/approve`, {
             method: 'PUT',
-            body: JSON.stringify({ response_note: responseNote }),
+            body: JSON.stringify({ response_note: responseNote || '' }),
         })
     }
 
-    async rejectJoinRequest(requestId, responseNote = null) {
+    async rejectJoinRequest(requestId, responseNote = '') {
         return this.request(`/api/organizations/join-requests/${requestId}/reject`, {
             method: 'PUT',
-            body: JSON.stringify({ response_note: responseNote }),
+            body: JSON.stringify({ response_note: responseNote || '' }),
         })
     }
 
     async skipOrganization() {
         return this.request('/api/organizations/skip-organization', {
             method: 'POST',
+        })
+    }
+
+    async setDefaultOrganization(orgId) {
+        return this.request(`/api/organizations/set-default/${orgId}`, {
+            method: 'PUT',
         })
     }
 

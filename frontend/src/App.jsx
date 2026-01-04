@@ -1860,22 +1860,109 @@ function OrganizationSelectPage() {
         return <Layout><div className="loading">Loading...</div></Layout>
     }
 
-    // If user already has an organization
-    if (orgStatus?.has_organization) {
+    // If user has any organization memberships
+    if (orgStatus?.memberships?.length > 0) {
         return (
             <Layout>
                 <div className="page-header">
-                    <h1>🏢 조직</h1>
-                </div>
-                <div className="card">
-                    <h3>현재 조직</h3>
-                    <p style={{ fontSize: 'var(--font-size-xl)', fontWeight: 'bold', color: 'var(--color-primary)' }}>
-                        {orgStatus.organization_name}
+                    <h1>🏢 내 조직</h1>
+                    <p style={{ color: 'var(--color-text-muted)' }}>
+                        가입된 조직들과 역할을 확인할 수 있습니다. 추가 조직에 가입하려면 아래 "가입 가능한 조직"에서 선택하세요.
                     </p>
-                    {orgStatus.is_org_admin && (
-                        <span className="badge badge-primary">조직 관리자</span>
-                    )}
                 </div>
+
+                {/* My Organizations */}
+                <div className="card">
+                    <h3>📋 내가 속한 조직 ({orgStatus.memberships.length}개)</h3>
+                    <table className="table">
+                        <thead>
+                            <tr>
+                                <th>조직 이름</th>
+                                <th>역할</th>
+                                <th>기본 조직</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {orgStatus.memberships.map(m => (
+                                <tr key={m.organization_id}>
+                                    <td style={{ fontWeight: '500' }}>{m.organization_name}</td>
+                                    <td>
+                                        <span className={`badge ${m.is_admin ? 'badge-primary' : 'badge-secondary'}`}>
+                                            {m.role}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        {orgStatus.organization_id === m.organization_id ? (
+                                            <span className="badge badge-success">✓ 기본</span>
+                                        ) : (
+                                            <button
+                                                className="btn btn-sm btn-secondary"
+                                                onClick={async () => {
+                                                    try {
+                                                        await api.setDefaultOrganization(m.organization_id)
+                                                        loadData()
+                                                    } catch (err) {
+                                                        alert('설정 실패: ' + err.message)
+                                                    }
+                                                }}
+                                            >
+                                                기본으로 설정
+                                            </button>
+                                        )}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Available Organizations to Join */}
+                {organizations.filter(o => !orgStatus.memberships.some(m => m.organization_id === o.id)).length > 0 && (
+                    <div className="card">
+                        <h3>🏛️ 추가 가입 가능한 조직</h3>
+                        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 'var(--spacing-3)' }}>
+                            {organizations
+                                .filter(o => !orgStatus.memberships.some(m => m.organization_id === o.id))
+                                .map(org => (
+                                    <div key={org.id} className="card" style={{ background: 'var(--color-bg-muted)' }}>
+                                        <h4 style={{ margin: '0 0 var(--spacing-2) 0' }}>{org.name}</h4>
+                                        <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', margin: '0 0 var(--spacing-3) 0' }}>
+                                            {org.description || '설명 없음'}
+                                        </p>
+                                        <button
+                                            className="btn btn-primary btn-sm"
+                                            onClick={() => { setSelectedOrg(org); setShowModal(true) }}
+                                        >
+                                            가입 요청
+                                        </button>
+                                    </div>
+                                ))}
+                        </div>
+                    </div>
+                )}
+
+                {/* Join Request Modal */}
+                {showModal && selectedOrg && (
+                    <div className="modal-overlay" onClick={() => setShowModal(false)}>
+                        <div className="modal-content" onClick={e => e.stopPropagation()}>
+                            <h3>🏛️ {selectedOrg.name} 가입 요청</h3>
+                            <div style={{ marginBottom: 'var(--spacing-3)' }}>
+                                <label className="form-label">가입 사유 (선택)</label>
+                                <textarea
+                                    className="form-textarea"
+                                    value={requestReason}
+                                    onChange={e => setRequestReason(e.target.value)}
+                                    placeholder="가입 사유를 입력하세요..."
+                                    rows={3}
+                                />
+                            </div>
+                            <div style={{ display: 'flex', gap: 'var(--spacing-2)', justifyContent: 'flex-end' }}>
+                                <button className="btn btn-secondary" onClick={() => setShowModal(false)}>취소</button>
+                                <button className="btn btn-primary" onClick={handleJoinRequest}>요청 제출</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </Layout>
         )
     }
@@ -2009,6 +2096,10 @@ function OrgJoinRequestsPage() {
     const [orgStatus, setOrgStatus] = useState(null)
     const [loading, setLoading] = useState(true)
     const [filter, setFilter] = useState('pending')
+    const [reasonModal, setReasonModal] = useState({ show: false, reason: '', username: '' })
+    const [actionModal, setActionModal] = useState({ show: false, type: '', requestId: null, username: '' })
+    const [rejectReason, setRejectReason] = useState('')
+    const [message, setMessage] = useState({ show: false, text: '', type: 'success' })
 
     useEffect(() => {
         loadData()
@@ -2019,10 +2110,9 @@ function OrgJoinRequestsPage() {
             const statusData = await api.getUserOrgStatus()
             setOrgStatus(statusData)
 
-            if (statusData.is_org_admin && statusData.organization_id) {
-                const requestsData = await api.getOrgJoinRequests(statusData.organization_id, filter === 'all' ? null : filter)
-                setRequests(requestsData)
-            }
+            // Use managed-join-requests to get requests from all orgs where user is admin
+            const requestsData = await api.getManagedJoinRequests(filter === 'all' ? null : filter)
+            setRequests(requestsData)
         } catch (err) {
             console.error('Failed to load data:', err)
         } finally {
@@ -2030,26 +2120,33 @@ function OrgJoinRequestsPage() {
         }
     }
 
+    const showMessage = (text, type = 'success') => {
+        setMessage({ show: true, text, type })
+        setTimeout(() => setMessage({ show: false, text: '', type: 'success' }), 3000)
+    }
+
     const handleApprove = async (requestId) => {
-        if (!confirm('이 요청을 승인하시겠습니까?')) return
         try {
             await api.approveJoinRequest(requestId)
-            alert('승인되었습니다.')
+            showMessage('승인되었습니다.', 'success')
+            setActionModal({ show: false, type: '', requestId: null, username: '' })
             loadData()
         } catch (err) {
-            alert('실패: ' + err.message)
+            const errorMsg = err?.message || err?.detail || (typeof err === 'string' ? err : JSON.stringify(err))
+            showMessage('실패: ' + errorMsg, 'error')
         }
     }
 
     const handleReject = async (requestId) => {
-        const reason = prompt('거절 사유를 입력하세요:')
-        if (reason === null) return
         try {
-            await api.rejectJoinRequest(requestId, reason)
-            alert('거절되었습니다.')
+            await api.rejectJoinRequest(requestId, rejectReason)
+            showMessage('거절되었습니다.', 'success')
+            setActionModal({ show: false, type: '', requestId: null, username: '' })
+            setRejectReason('')
             loadData()
         } catch (err) {
-            alert('실패: ' + err.message)
+            const errorMsg = err?.message || err?.detail || (typeof err === 'string' ? err : JSON.stringify(err))
+            showMessage('실패: ' + errorMsg, 'error')
         }
     }
 
@@ -2057,7 +2154,10 @@ function OrgJoinRequestsPage() {
         return <Layout><div className="loading">Loading...</div></Layout>
     }
 
-    if (!orgStatus?.is_org_admin) {
+    // Check if user is admin of any organization
+    const isAnyOrgAdmin = orgStatus?.memberships?.some(m => m.is_admin) || orgStatus?.is_superuser
+
+    if (!isAnyOrgAdmin) {
         return (
             <Layout>
                 <div className="page-header">
@@ -2071,13 +2171,19 @@ function OrgJoinRequestsPage() {
     }
 
     const pendingCount = requests.filter(r => r.status === 'pending').length
+    const adminOrgCount = orgStatus?.memberships?.filter(m => m.is_admin)?.length || 0
 
     return (
         <Layout>
             <div className="page-header">
                 <h1>👥 가입 요청 관리</h1>
                 <p style={{ color: 'var(--color-text-muted)' }}>
-                    {orgStatus.organization_name} 조직의 가입 요청을 관리합니다.
+                    관리 중인 조직의 가입 요청을 확인하고 처리합니다.
+                    {adminOrgCount > 0 && (
+                        <span style={{ marginLeft: 'var(--spacing-2)' }}>
+                            (관리 조직: {adminOrgCount}개)
+                        </span>
+                    )}
                     {pendingCount > 0 && (
                         <span className="badge badge-warning" style={{ marginLeft: 'var(--spacing-2)' }}>
                             {pendingCount}개 대기
@@ -2108,63 +2214,164 @@ function OrgJoinRequestsPage() {
                         {filter === 'pending' ? '대기 중인 요청이 없습니다.' : '요청이 없습니다.'}
                     </p>
                 ) : (
-                    <table className="data-table">
-                        <thead>
-                            <tr>
-                                <th>사용자</th>
-                                <th>이메일</th>
-                                <th>요청 사유</th>
-                                <th>상태</th>
-                                <th>요청일</th>
-                                <th>작업</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {requests.map(req => (
-                                <tr key={req.id}>
-                                    <td>{req.user_username}</td>
-                                    <td>{req.user_email}</td>
-                                    <td>{req.request_reason || '-'}</td>
-                                    <td>
-                                        <span className={`badge ${req.status === 'pending' ? 'badge-warning' :
-                                            req.status === 'approved' ? 'badge-success' : 'badge-danger'
-                                            }`}>
-                                            {req.status === 'pending' ? '대기' :
-                                                req.status === 'approved' ? '승인' : '거절'}
-                                        </span>
-                                    </td>
-                                    <td>{new Date(req.created_at).toLocaleDateString()}</td>
-                                    <td>
-                                        {req.status === 'pending' && (
-                                            <div style={{ display: 'flex', gap: 'var(--spacing-2)' }}>
-                                                <button
-                                                    className="btn btn-success"
-                                                    style={{ padding: '4px 8px', fontSize: 'var(--font-size-xs)' }}
-                                                    onClick={() => handleApprove(req.id)}
-                                                >
-                                                    승인
-                                                </button>
-                                                <button
-                                                    className="btn btn-danger"
-                                                    style={{ padding: '4px 8px', fontSize: 'var(--font-size-xs)' }}
-                                                    onClick={() => handleReject(req.id)}
-                                                >
-                                                    거절
-                                                </button>
-                                            </div>
-                                        )}
-                                        {req.status !== 'pending' && (
-                                            <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-xs)' }}>
-                                                처리됨
-                                            </span>
-                                        )}
-                                    </td>
+                    <div style={{ overflowX: 'auto' }}>
+                        <table className="data-table" style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr>
+                                    <th style={{ width: '14.28%', padding: '12px 16px', textAlign: 'left' }}>조직</th>
+                                    <th style={{ width: '14.28%', padding: '12px 16px', textAlign: 'left' }}>사용자</th>
+                                    <th style={{ width: '14.28%', padding: '12px 16px', textAlign: 'left' }}>이메일</th>
+                                    <th style={{ width: '14.28%', padding: '12px 16px', textAlign: 'center' }}>요청 사유</th>
+                                    <th style={{ width: '14.28%', padding: '12px 16px', textAlign: 'center' }}>상태</th>
+                                    <th style={{ width: '14.28%', padding: '12px 16px', textAlign: 'center' }}>요청일</th>
+                                    <th style={{ width: '14.28%', padding: '12px 16px', textAlign: 'center' }}>작업</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {requests.map(req => (
+                                    <tr key={req.id}>
+                                        <td style={{ padding: '12px 16px', overflow: 'hidden', textOverflow: 'ellipsis' }}><strong>{req.organization_name}</strong></td>
+                                        <td style={{ padding: '12px 16px', overflow: 'hidden', textOverflow: 'ellipsis' }}>{req.user_username}</td>
+                                        <td style={{ padding: '12px 16px', overflow: 'hidden', textOverflow: 'ellipsis', wordBreak: 'break-all' }}>{req.user_email}</td>
+                                        <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                                            <button
+                                                className="btn btn-secondary"
+                                                style={{ padding: '4px 10px', fontSize: 'var(--font-size-xs)' }}
+                                                onClick={() => setReasonModal({
+                                                    show: true,
+                                                    reason: req.request_reason || '(요청 사유 없음)',
+                                                    username: req.user_username
+                                                })}
+                                            >
+                                                상세보기
+                                            </button>
+                                        </td>
+                                        <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                                            <span className={`badge ${req.status === 'pending' ? 'badge-warning' :
+                                                req.status === 'approved' ? 'badge-success' : 'badge-danger'
+                                                }`}>
+                                                {req.status === 'pending' ? '대기' :
+                                                    req.status === 'approved' ? '승인' : '거절'}
+                                            </span>
+                                        </td>
+                                        <td style={{ padding: '12px 16px', textAlign: 'center' }}>{new Date(req.created_at).toLocaleDateString()}</td>
+                                        <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                                                {req.status === 'pending' ? (
+                                                    <>
+                                                        <button
+                                                            className="btn btn-success"
+                                                            style={{ padding: '4px 8px', fontSize: 'var(--font-size-xs)' }}
+                                                            onClick={() => setActionModal({ show: true, type: 'approve', requestId: req.id, username: req.user_username })}
+                                                        >
+                                                            승인
+                                                        </button>
+                                                        <button
+                                                            className="btn btn-danger"
+                                                            style={{ padding: '4px 8px', fontSize: 'var(--font-size-xs)' }}
+                                                            onClick={() => setActionModal({ show: true, type: 'reject', requestId: req.id, username: req.user_username })}
+                                                        >
+                                                            거절
+                                                        </button>
+                                                    </>
+                                                ) : (
+                                                    <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-xs)' }}>
+                                                        처리됨
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
             </div>
+
+            {/* Request Reason Modal */}
+            {reasonModal.show && (
+                <div className="modal-overlay" onClick={() => setReasonModal({ show: false, reason: '', username: '' })}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+                        <h3>📝 {reasonModal.username}님의 요청 사유</h3>
+                        <div style={{
+                            padding: 'var(--spacing-3)',
+                            background: 'var(--color-bg-muted)',
+                            borderRadius: 'var(--border-radius)',
+                            marginBottom: 'var(--spacing-3)',
+                            whiteSpace: 'pre-wrap'
+                        }}>
+                            {reasonModal.reason}
+                        </div>
+                        <button
+                            className="btn btn-primary"
+                            onClick={() => setReasonModal({ show: false, reason: '', username: '' })}
+                            style={{ width: '100%' }}
+                        >
+                            닫기
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Action Confirmation Modal */}
+            {actionModal.show && (
+                <div className="modal-overlay" onClick={() => { setActionModal({ show: false, type: '', requestId: null, username: '' }); setRejectReason('') }}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+                        <h3>{actionModal.type === 'approve' ? '✅ 가입 승인' : '❌ 가입 거절'}</h3>
+                        <p style={{ marginBottom: 'var(--spacing-3)' }}>
+                            <strong>{actionModal.username}</strong>님의 가입 요청을 {actionModal.type === 'approve' ? '승인' : '거절'}하시겠습니까?
+                        </p>
+
+                        {actionModal.type === 'reject' && (
+                            <div style={{ marginBottom: 'var(--spacing-3)' }}>
+                                <label className="form-label">거절 사유 (선택)</label>
+                                <textarea
+                                    className="form-textarea"
+                                    value={rejectReason}
+                                    onChange={e => setRejectReason(e.target.value)}
+                                    placeholder="거절 사유를 입력하세요..."
+                                    rows={3}
+                                    style={{ width: '100%' }}
+                                />
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: 'var(--spacing-2)', justifyContent: 'flex-end' }}>
+                            <button
+                                className="btn btn-secondary"
+                                onClick={() => { setActionModal({ show: false, type: '', requestId: null, username: '' }); setRejectReason('') }}
+                            >
+                                취소
+                            </button>
+                            <button
+                                className={`btn ${actionModal.type === 'approve' ? 'btn-success' : 'btn-danger'}`}
+                                onClick={() => actionModal.type === 'approve' ? handleApprove(actionModal.requestId) : handleReject(actionModal.requestId)}
+                            >
+                                {actionModal.type === 'approve' ? '승인' : '거절'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Toast Message */}
+            {message.show && (
+                <div style={{
+                    position: 'fixed',
+                    top: '20px',
+                    right: '20px',
+                    padding: '12px 24px',
+                    borderRadius: 'var(--border-radius)',
+                    background: message.type === 'success' ? 'var(--color-success)' : 'var(--color-danger)',
+                    color: 'white',
+                    fontWeight: 'bold',
+                    zIndex: 1001,
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+                }}>
+                    {message.text}
+                </div>
+            )}
         </Layout>
     )
 }

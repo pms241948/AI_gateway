@@ -1,87 +1,163 @@
 # AI Gateway
 
-오프라인 폐쇄망 환경에서 운영 가능한 LLM Gateway 솔루션입니다.
+<div align="center">
 
-## 주요 기능
+![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+![Docker](https://img.shields.io/badge/docker-required-blue.svg)
 
-- **OpenAI 호환 API**: `/v1/chat/completions`, `/v1/embeddings` 엔드포인트
-- **다중 Provider 지원**: Ollama, vLLM, OpenAI, Anthropic 등
-- **모델 라우팅**: Alias 기반 라우팅, 부하 분산, 폴백
-- **권한 관리**: 사용자/조직/그룹 기반 접근 제어
-- **로깅 및 감사**: 모든 요청/응답 로깅, CSV 내보내기
-- **통계 대시보드**: 사용량, 지연시간, 오류율 모니터링
-- **헬스체크**: 모델 엔드포인트 상태 확인
-- **오프라인 설치**: Docker Compose 기반 완전 오프라인 배포
+**Enterprise-grade LLM Gateway Solution for Secure AI Operations**
 
-## 빠른 시작
+[한국어 문서](./README.ko.md) | [API Documentation](./docs/api.md) | [Admin Guide](./docs/admin-guide.md) | [Installation Guide](./docs/offline-installation.md)
 
-### 사전 요구사항
+</div>
 
-- Docker 20+
-- Docker Compose 2+
+---
 
-### 설치
+## Overview
+
+AI Gateway is a comprehensive LLM (Large Language Model) gateway solution designed for enterprise environments. It provides a unified API interface compatible with OpenAI, supporting multiple LLM providers while offering robust security, access control, and monitoring capabilities.
+
+### Key Features
+
+![Dashboard Overview](./dashboard_screenshot_1767531724148.png)
+
+| Category | Features |
+|----------|----------|
+| **API Compatibility** | OpenAI-compatible endpoints (`/v1/chat/completions`, `/v1/embeddings`) |
+| **Multi-Provider** | Ollama, vLLM, OpenAI, Anthropic, Azure OpenAI, Custom endpoints |
+| **Security** | AI Security scanning with Garak, PII detection & masking, Input/Output filtering |
+| **Access Control** | User/Organization/Group-based permissions, API key management, SSO (OIDC) |
+| **Monitoring** | Request/Response logging, Usage analytics dashboard, Real-time metrics |
+| **Deployment** | Docker Compose, Offline installation support, Production-ready |
+
+---
+
+## Architecture
+
+```
+┌────────────────┐      ┌────────────────┐      ┌────────────────┐
+│     Client     │─────▶│     Nginx      │─────▶│    FastAPI     │
+│  (API/Admin)   │      │  (Reverse Proxy)│      │   (Backend)    │
+└────────────────┘      └────────────────┘      └────────────────┘
+                                                        │
+               ┌────────────────────────────────────────┼────────────────┐
+               │                    │                   │                │
+        ┌──────▼──────┐     ┌───────▼──────┐    ┌──────▼──────┐  ┌──────▼──────┐
+        │   Ollama    │     │     vLLM     │    │   OpenAI    │  │  PostgreSQL │
+        │  (Local AI) │     │ (Self-hosted)│    │  (Cloud)    │  │  (Database) │
+        └─────────────┘     └──────────────┘    └─────────────┘  └─────────────┘
+                                                                         │
+                                                                  ┌──────▼──────┐
+                                                                  │    Redis    │
+                                                                  │   (Cache)   │
+                                                                  └─────────────┘
+```
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Docker 20.10+
+- Docker Compose 2.0+
+- 4GB+ RAM recommended
+
+### Installation
 
 ```bash
-# 저장소 클론
+# Clone repository
 git clone https://github.com/your-org/ai-gateway.git
 cd ai-gateway
 
-# 환경 변수 설정
+# Configure environment
 cp .env.example .env
-# .env 파일 편집하여 비밀키 변경
+# Edit .env file with your settings
 
-# 서비스 시작
+# Start services
 docker compose up -d
 
-# 상태 확인
+# Check status
 docker compose ps
 ```
 
-### 접속
+### Access Points
 
-- **Admin UI**: http://localhost
-- **API**: http://localhost/v1/
-- **API 문서**: http://localhost/docs (개발 모드)
+| Service | URL | Description |
+|---------|-----|-------------|
+| Admin UI | http://localhost:3000 | Web administration panel |
+| API | http://localhost:8000/v1/ | OpenAI-compatible API |
+| API Docs | http://localhost:8000/docs | Swagger documentation |
 
-### 기본 관리자 계정
+### Default Credentials
 
-- Email: admin@example.com (또는 .env에서 설정)
-- Password: admin123 (또는 .env에서 설정)
+- **Email**: `admin@example.com`
+- **Password**: `admin123`
 
-## 사용법
+> ⚠️ **Important**: Change default credentials in production!
 
-### 1. Provider 등록
+---
 
-Admin UI에서 Provider 메뉴 → Add Provider:
+## Configuration
 
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SECRET_KEY` | Application secret key | `change-me-in-production` |
+| `JWT_SECRET_KEY` | JWT signing key | `change-me-in-production` |
+| `DB_PASSWORD` | PostgreSQL password | `password` |
+| `ADMIN_EMAIL` | Initial admin email | `admin@example.com` |
+| `ADMIN_PASSWORD` | Initial admin password | `admin123` |
+| `DEBUG` | Debug mode | `false` |
+| `LOG_LEVEL` | Logging level | `INFO` |
+
+### Optional Features
+
+```bash
+# Enable security scanning (Garak)
+docker compose --profile security up -d
+
+# Production mode with Nginx
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
+
+---
+
+## Usage
+
+### 1. Register a Provider
+
+Navigate to **Providers** → **Add Provider** in Admin UI:
+
+```yaml
 Name: my-ollama
 Type: ollama
 Base URL: http://ollama:11434
 Auth Type: none
 ```
 
-### 2. 모델 등록
+### 2. Register a Model
 
-Models 메뉴 → Add Model:
+Navigate to **Models** → **Add Model**:
 
-```
+```yaml
 Alias: llama3
 Display Name: Llama 3 8B
 Type: chat
 Endpoints:
   - Provider: my-ollama
-  - Provider Model Name: llama3:8b
+  - Model Name: llama3:8b
 ```
 
-### 3. API 호출
+### 3. API Calls
 
 ```bash
-# API 키 발급 (Admin UI → Users → API Keys)
+# Get API Key from Admin UI → Users → API Keys
 
 # Chat Completion
-curl -X POST http://localhost/v1/chat/completions \
+curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Authorization: Bearer sk-your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -90,7 +166,7 @@ curl -X POST http://localhost/v1/chat/completions \
   }'
 
 # Embeddings
-curl -X POST http://localhost/v1/embeddings \
+curl -X POST http://localhost:8000/v1/embeddings \
   -H "Authorization: Bearer sk-your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -99,36 +175,168 @@ curl -X POST http://localhost/v1/embeddings \
   }'
 ```
 
-## 오프라인 설치
+---
 
-오프라인 환경에 설치하려면 [docs/offline-installation.md](docs/offline-installation.md)를 참조하세요.
+## Features Detail
 
-## 환경 변수
+### Organization Management
 
-| 변수 | 설명 | 기본값 |
-|------|------|--------|
-| `SECRET_KEY` | 애플리케이션 비밀키 | change-me |
-| `JWT_SECRET_KEY` | JWT 서명 키 | change-me |
-| `DB_PASSWORD` | PostgreSQL 비밀번호 | password |
-| `ADMIN_EMAIL` | 초기 관리자 이메일 | admin@example.com |
-| `ADMIN_PASSWORD` | 초기 관리자 비밀번호 | admin123 |
-| `DEBUG` | 디버그 모드 | false |
-| `LOG_LEVEL` | 로그 레벨 | INFO |
+![Join Requests Management](./join_requests_screenshot_1767531758439.png)
 
-## 아키텍처
+- **Multi-Organization Support**: Users can belong to multiple organizations simultaneously
+- **Role-Based Access**: Admin, Member roles per organization
+- **Join Request System**: Request-based organization membership with approval workflow
+- **Organization Groups**: Fine-grained model access control within organizations
+
+### Security Features
+
+- **AI Security Scanning**: Integrated Garak scanner for model vulnerability testing
+- **PII Detection**: Automatic detection and masking of sensitive information
+- **Request Filtering**: Input/output content filtering and moderation
+- **Audit Logging**: Complete request/response logging for compliance
+
+### Admin Dashboard
+
+- **Usage Statistics**: Real-time usage charts and metrics
+- **Model Health**: Endpoint availability monitoring
+- **User Management**: User creation, API key management
+- **Request Logs**: Searchable log viewer with CSV export
+
+---
+
+## Production Deployment
+
+### Internet Environment
+
+```bash
+# 1. Clone and configure
+git clone https://github.com/your-org/ai-gateway.git
+cd ai-gateway
+cp .env.example .env
+
+# 2. Edit .env with production values
+nano .env
+
+# 3. Build and start with production profile
+docker compose --profile security up -d --build
+
+# 4. Set up reverse proxy (nginx/traefik) for HTTPS
+```
+
+### Security Recommendations
+
+1. **Change all default passwords** in `.env`
+2. **Enable HTTPS** via reverse proxy
+3. **Configure firewall** to restrict port access
+4. **Enable rate limiting** in production
+5. **Regular backups** of PostgreSQL data
+
+### Offline Installation
+
+See [docs/offline-installation.md](./docs/offline-installation.md) for air-gapped environment setup.
+
+---
+
+## API Reference
+
+### Authentication
+
+All API requests require an API key in the Authorization header:
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Client    │────▶│    Nginx    │────▶│   FastAPI   │
-└─────────────┘     └─────────────┘     └─────────────┘
-                                              │
-                    ┌─────────┬───────────────┼───────────────┐
-                    │         │               │               │
-               ┌────▼───┐ ┌───▼────┐    ┌────▼───┐    ┌──────▼─────┐
-               │ Ollama │ │  vLLM  │    │ OpenAI │    │ PostgreSQL │
-               └────────┘ └────────┘    └────────┘    └────────────┘
+Authorization: Bearer sk-your-api-key
 ```
 
-## 라이선스
+### Endpoints
 
-MIT License
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/v1/chat/completions` | Chat completion (OpenAI compatible) |
+| POST | `/v1/embeddings` | Text embeddings |
+| GET | `/v1/models` | List available models |
+| GET | `/health` | Health check |
+
+---
+
+## Development
+
+### Local Development
+
+```bash
+# Backend
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+
+# Frontend
+cd frontend
+npm install
+npm run dev
+```
+
+### Project Structure
+
+```
+ai-gateway/
+├── backend/           # FastAPI backend
+│   ├── app/
+│   │   ├── api/       # API routes
+│   │   ├── models/    # SQLAlchemy models
+│   │   └── services/  # Business logic
+│   └── Dockerfile
+├── frontend/          # React admin UI
+├── garak-service/     # Security scanner
+├── nginx/             # Reverse proxy config
+├── docs/              # Documentation
+└── docker-compose.yml
+```
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| Database connection failed | Check PostgreSQL container health |
+| Port already in use | Change port mapping in docker-compose.yml |
+| API returns 401 | Verify API key is valid and not expired |
+| Models not loading | Check provider endpoint connectivity |
+
+### Logs
+
+```bash
+# View all logs
+docker compose logs -f
+
+# Backend only
+docker logs ai_gateway_backend -f
+
+# Database
+docker logs ai_gateway_postgres -f
+```
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## Support
+
+- **Issues**: [GitHub Issues](https://github.com/your-org/ai-gateway/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/your-org/ai-gateway/discussions)
+- **Email**: support@your-org.com
