@@ -109,10 +109,22 @@ class PIIMaskingService:
         "KOREAN_PHONE",
     ]
     
-    # Default NLP model (lightweight)
+    # Default NLP models (English + Korean)
     DEFAULT_NLP_MODELS = [
         {"lang_code": "en", "model_name": "en_core_web_sm"},
+        {"lang_code": "ko", "model_name": "ko_core_news_md"},
     ]
+    
+    # Runtime settings (can be changed dynamically)
+    _runtime_enabled: bool = True
+    _runtime_mask_request: bool = True
+    _runtime_mask_response: bool = True
+    
+    # Per-language runtime settings
+    _runtime_models_enabled: Dict[str, bool] = {
+        "en": True,
+        "ko": True,
+    }
     
     def __init__(
         self,
@@ -453,3 +465,74 @@ def reload_masking_service(
     )
     
     return _masking_service
+
+
+# ============================================================================
+# Runtime Toggle Functions (No restart required)
+# ============================================================================
+
+def set_pii_enabled(enabled: bool) -> None:
+    """Enable or disable PII masking at runtime."""
+    PIIMaskingService._runtime_enabled = enabled
+    logger.info(f"PII masking {'enabled' if enabled else 'disabled'}")
+
+
+def set_mask_request(enabled: bool) -> None:
+    """Enable or disable request masking at runtime."""
+    PIIMaskingService._runtime_mask_request = enabled
+    logger.info(f"Request masking {'enabled' if enabled else 'disabled'}")
+
+
+def set_mask_response(enabled: bool) -> None:
+    """Enable or disable response masking at runtime."""
+    PIIMaskingService._runtime_mask_response = enabled
+    logger.info(f"Response masking {'enabled' if enabled else 'disabled'}")
+
+
+def get_runtime_settings() -> Dict[str, bool]:
+    """Get current runtime PII settings."""
+    return {
+        "enabled": PIIMaskingService._runtime_enabled,
+        "mask_request": PIIMaskingService._runtime_mask_request,
+        "mask_response": PIIMaskingService._runtime_mask_response,
+    }
+
+
+def is_pii_enabled() -> bool:
+    """Check if PII masking is currently enabled."""
+    return PIIMaskingService._runtime_enabled
+
+
+def should_mask_request() -> bool:
+    """Check if request masking is enabled."""
+    return PIIMaskingService._runtime_enabled and PIIMaskingService._runtime_mask_request
+
+
+def should_mask_response() -> bool:
+    """Check if response masking is enabled."""
+    return PIIMaskingService._runtime_enabled and PIIMaskingService._runtime_mask_response
+
+
+# ============================================================================
+# Per-Language Model Toggle Functions
+# ============================================================================
+
+def set_model_enabled(lang_code: str, enabled: bool) -> None:
+    """Enable or disable a specific language model at runtime."""
+    PIIMaskingService._runtime_models_enabled[lang_code] = enabled
+    logger.info(f"NLP model '{lang_code}' {'enabled' if enabled else 'disabled'}")
+
+
+def get_model_enabled(lang_code: str) -> bool:
+    """Check if a specific language model is enabled."""
+    return PIIMaskingService._runtime_models_enabled.get(lang_code, False)
+
+
+def get_all_models_status() -> Dict[str, bool]:
+    """Get enabled status of all language models."""
+    return PIIMaskingService._runtime_models_enabled.copy()
+
+
+def get_enabled_languages() -> List[str]:
+    """Get list of enabled language codes."""
+    return [lang for lang, enabled in PIIMaskingService._runtime_models_enabled.items() if enabled]

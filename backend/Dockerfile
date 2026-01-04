@@ -12,8 +12,9 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download spaCy model for Presidio PII detection
-RUN python -m spacy download en_core_web_sm
+# Download spaCy models for Presidio PII detection
+RUN python -m spacy download en_core_web_sm && \
+    python -m spacy download ko_core_news_md
 
 # Copy application code
 COPY . .

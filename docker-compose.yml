@@ -19,6 +19,7 @@ services:
       - DEBUG=true
       - LOG_LEVEL=INFO
       - CORS_ORIGINS=["http://localhost","http://localhost:3000","http://localhost:8000"]
+      - GARAK_SERVICE_URL=http://garak:8080
     depends_on:
       postgres:
         condition: service_healthy
@@ -27,6 +28,24 @@ services:
     networks:
       - ai_gateway_network
     restart: unless-stopped
+
+  # ===========================================
+  # Garak Security Scanner (Optional)
+  # ===========================================
+  garak:
+    build:
+      context: ./garak-service
+      dockerfile: Dockerfile
+    container_name: ai_gateway_garak
+    ports:
+      - "8080:8080"
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - ai_gateway_network
+    restart: unless-stopped
+    profiles:
+      - security
 
   # ===========================================
   # PostgreSQL Database

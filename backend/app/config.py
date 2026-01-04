@@ -51,12 +51,26 @@ class Settings(BaseSettings):
     log_request_body: bool = False
     log_response_body: bool = False
 
-    # OIDC (Optional)
+    # OIDC (Optional) - Legacy single provider
     oidc_enabled: bool = False
     oidc_provider_url: Optional[str] = None
     oidc_client_id: Optional[str] = None
     oidc_client_secret: Optional[str] = None
     oidc_redirect_uri: Optional[str] = None
+    
+    # Google OAuth2 (Optional)
+    google_oauth_enabled: bool = False
+    google_client_id: Optional[str] = None
+    google_client_secret: Optional[str] = None
+    google_redirect_uri: Optional[str] = None
+    
+    # Keycloak OIDC (Optional)
+    keycloak_enabled: bool = False
+    keycloak_server_url: Optional[str] = None  # e.g., https://keycloak.example.com
+    keycloak_realm: Optional[str] = None  # e.g., my-realm
+    keycloak_client_id: Optional[str] = None
+    keycloak_client_secret: Optional[str] = None
+    keycloak_redirect_uri: Optional[str] = None
 
     # PII Masking (Presidio)
     pii_masking_enabled: bool = True

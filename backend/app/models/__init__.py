@@ -9,9 +9,19 @@ from app.models.llm_model import (
     OrgModelAccess,
     GroupModelAccess,
 )
-from app.models.logs import RequestLog, AuditLog, HealthCheckResult, SecurityScanResult
+from app.models.logs import RequestLog, AuditLog, HealthCheckResult
 from app.models.policy import MaskingPolicy, MaskingEntity
 from app.models.pii_models import PIINlpModel, PIIRecognizer, PIIApiEndpoint
+from app.models.security_scan import (
+    SecurityScanProfile,
+    SecurityScanResult,
+    SecurityVulnerability,
+    ScanStatus,
+    ScanType,
+    VulnerabilitySeverity,
+)
+from app.models.model_request import ModelAccessRequest, RequestStatus
+from app.models.org_request import OrgJoinRequest, JoinRequestStatus
 
 __all__ = [
     "User",
@@ -31,11 +41,19 @@ __all__ = [
     "RequestLog",
     "AuditLog",
     "HealthCheckResult",
-    "SecurityScanResult",
     "MaskingPolicy",
     "MaskingEntity",
     "PIINlpModel",
     "PIIRecognizer",
     "PIIApiEndpoint",
+    "SecurityScanProfile",
+    "SecurityScanResult",
+    "SecurityVulnerability",
+    "ScanStatus",
+    "ScanType",
+    "VulnerabilitySeverity",
+    "ModelAccessRequest",
+    "RequestStatus",
+    "OrgJoinRequest",
+    "JoinRequestStatus",
 ]
-

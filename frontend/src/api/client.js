@@ -257,6 +257,18 @@ class ApiClient {
         return this.request('/api/pii/entities')
     }
 
+    // PII Runtime Settings (Dynamic Toggle)
+    async getRuntimeSettings() {
+        return this.request('/api/pii/runtime-settings')
+    }
+
+    async updateRuntimeSettings(settings) {
+        return this.request('/api/pii/runtime-settings', {
+            method: 'PUT',
+            body: JSON.stringify(settings),
+        })
+    }
+
     // PII Model Management
     async getNlpModels() {
         return this.request('/api/pii/nlp-models')
@@ -272,6 +284,12 @@ class ApiClient {
     async deleteNlpModel(modelId) {
         return this.request(`/api/pii/nlp-models/${modelId}`, {
             method: 'DELETE',
+        })
+    }
+
+    async toggleNlpModel(langCode) {
+        return this.request(`/api/pii/nlp-models/${langCode}/toggle`, {
+            method: 'POST',
         })
     }
 
@@ -305,10 +323,199 @@ class ApiClient {
             body: JSON.stringify({ pattern, text }),
         })
     }
+
+    // External PII API Endpoints
+    async getPiiEndpoints() {
+        return this.request('/api/pii/endpoints')
+    }
+
+    async createPiiEndpoint(data) {
+        return this.request('/api/pii/endpoints', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        })
+    }
+
+    async updatePiiEndpoint(endpointId, data) {
+        return this.request(`/api/pii/endpoints/${endpointId}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        })
+    }
+
+    async deletePiiEndpoint(endpointId) {
+        return this.request(`/api/pii/endpoints/${endpointId}`, {
+            method: 'DELETE',
+        })
+    }
+
+    async testPiiEndpoint(endpointId, text, language = 'en') {
+        return this.request(`/api/pii/endpoints/${endpointId}/test`, {
+            method: 'POST',
+            body: JSON.stringify({ text, language }),
+        })
+    }
+
+    async checkPiiEndpointHealth(endpointId) {
+        return this.request(`/api/pii/endpoints/${endpointId}/health`, {
+            method: 'POST',
+        })
+    }
+
+    // Security Scan
+    async getScannableModels() {
+        return this.request('/api/security/models')
+    }
+
+    async getScanCategories() {
+        return this.request('/api/security/categories')
+    }
+
+    async startSecurityScan(modelId, scanType = 'quick', categories = null) {
+        return this.request(`/api/security/scan/${modelId}`, {
+            method: 'POST',
+            body: JSON.stringify({ scan_type: scanType, categories }),
+        })
+    }
+
+    async getScanResult(scanId) {
+        return this.request(`/api/security/scan/${scanId}`)
+    }
+
+    async getScanResults(modelId = null, limit = 20) {
+        const params = new URLSearchParams()
+        if (modelId) params.append('model_id', modelId)
+        params.append('limit', limit)
+        return this.request(`/api/security/results?${params.toString()}`)
+    }
+
+    // Garak Security Scan
+    async getGarakStatus() {
+        return this.request('/api/security/garak/status')
+    }
+
+    async getGarakCategories() {
+        return this.request('/api/security/garak/categories')
+    }
+
+    async getGarakProbes() {
+        return this.request('/api/security/garak/probes')
+    }
+
+    async startGarakScan(modelId, scanType = 'quick', categories = null) {
+        return this.request(`/api/security/garak/scan/${modelId}`, {
+            method: 'POST',
+            body: JSON.stringify({ scan_type: scanType, categories }),
+        })
+    }
+
+    downloadScanResult(scanId) {
+        // Return download URL directly
+        return `${this.baseUrl}/api/security/scan/${scanId}/download`
+    }
+
+    // Model Access Request Workflow
+    async createAccessRequest(modelId, requestReason = null) {
+        return this.request('/api/model-access/requests', {
+            method: 'POST',
+            body: JSON.stringify({ model_id: modelId, request_reason: requestReason }),
+        })
+    }
+
+    async getAccessRequests(status = null) {
+        const params = status ? `?status=${status}` : ''
+        return this.request(`/api/model-access/requests${params}`)
+    }
+
+    async getMyAccessRequests() {
+        return this.request('/api/model-access/my-requests')
+    }
+
+    async approveAccessRequest(requestId, responseNote = null) {
+        return this.request(`/api/model-access/requests/${requestId}/approve`, {
+            method: 'PUT',
+            body: JSON.stringify({ response_note: responseNote }),
+        })
+    }
+
+    async rejectAccessRequest(requestId, responseNote = null) {
+        return this.request(`/api/model-access/requests/${requestId}/reject`, {
+            method: 'PUT',
+            body: JSON.stringify({ response_note: responseNote }),
+        })
+    }
+
+    async getPendingRequestsCount() {
+        return this.request('/api/model-access/requests/pending/count')
+    }
+
+    // Organization Join Workflow
+    async getAvailableOrganizations() {
+        return this.request('/api/organizations/available')
+    }
+
+    async getUserOrgStatus() {
+        return this.request('/api/organizations/user-status')
+    }
+
+    async requestToJoinOrg(orgId, requestReason = null) {
+        return this.request(`/api/organizations/${orgId}/join`, {
+            method: 'POST',
+            body: JSON.stringify({ request_reason: requestReason }),
+        })
+    }
+
+    async getMyJoinRequests() {
+        return this.request('/api/organizations/my-join-requests')
+    }
+
+    async getOrgJoinRequests(orgId, status = null) {
+        const params = status ? `?status=${status}` : ''
+        return this.request(`/api/organizations/${orgId}/join-requests${params}`)
+    }
+
+    async approveJoinRequest(requestId, responseNote = null) {
+        return this.request(`/api/organizations/join-requests/${requestId}/approve`, {
+            method: 'PUT',
+            body: JSON.stringify({ response_note: responseNote }),
+        })
+    }
+
+    async rejectJoinRequest(requestId, responseNote = null) {
+        return this.request(`/api/organizations/join-requests/${requestId}/reject`, {
+            method: 'PUT',
+            body: JSON.stringify({ response_note: responseNote }),
+        })
+    }
+
+    async skipOrganization() {
+        return this.request('/api/organizations/skip-organization', {
+            method: 'POST',
+        })
+    }
+
+    // ============================================================================
+    // Pending Registrations (Admin)
+    // ============================================================================
+
+    async getPendingRegistrations() {
+        return this.request('/api/auth/pending-registrations')
+    }
+
+    async approveRegistration(userId) {
+        return this.request(`/api/auth/registrations/${userId}/approve`, { method: 'PUT' })
+    }
+
+    async rejectRegistration(userId) {
+        return this.request(`/api/auth/registrations/${userId}/reject`, { method: 'PUT' })
+    }
+
+    async adminCreateUser(userData) {
+        return this.request('/api/auth/admin/create-user', {
+            method: 'POST',
+            body: JSON.stringify(userData)
+        })
+    }
 }
 
 export const api = new ApiClient()
-
-
-
-

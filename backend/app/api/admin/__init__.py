@@ -11,6 +11,7 @@ from app.api.admin.organizations import router as organizations_router
 from app.api.admin.model_access import router as model_access_router
 from app.api.admin.pii import router as pii_router
 from app.api.admin.pii_models import router as pii_models_router
+from app.api.admin.security_scan import router as security_scan_router
 
 router = APIRouter(prefix="/api")
 router.include_router(auth_router)
@@ -23,5 +24,4 @@ router.include_router(organizations_router)
 router.include_router(model_access_router)
 router.include_router(pii_router)
 router.include_router(pii_models_router)
-
-
+router.include_router(security_scan_router)

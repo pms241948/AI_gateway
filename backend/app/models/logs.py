@@ -123,28 +123,3 @@ class HealthCheckResult(Base):
         "ModelEndpoint", back_populates="health_checks"
     )
 
-
-class SecurityScanResult(Base):
-    """Security scan results for models."""
-
-    __tablename__ = "security_scan_results"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    model_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("models.id")
-    )
-    
-    scanner_type: Mapped[str] = mapped_column(String(50))  # promptfoo, garak, ps-fuzz
-    scan_status: Mapped[str] = mapped_column(String(50))  # pending, running, completed, failed
-    
-    results: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    summary: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    recommendation: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # approve, hold, reject
-    
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-
-    # Relationships
-    model: Mapped["LLMModel"] = relationship("LLMModel", back_populates="security_scans")

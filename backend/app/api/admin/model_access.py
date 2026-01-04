@@ -304,3 +304,248 @@ async def get_my_available_models(
                 }
     
     return list(models.values())
+
+
+# ============================================================================
+# Model Access Request Approval Workflow
+# ============================================================================
+
+from datetime import datetime
+from app.models.model_request import ModelAccessRequest, RequestStatus
+
+
+class AccessRequestCreate(BaseModel):
+    model_id: UUID
+    request_reason: str = None
+
+
+class AccessRequestResponse(BaseModel):
+    id: str
+    user_id: str
+    user_email: str
+    model_id: str
+    model_alias: str
+    request_reason: str = None
+    status: str
+    response_note: str = None
+    created_at: datetime
+    reviewed_at: datetime = None
+
+
+@router.post("/requests")
+async def create_access_request(
+    request_data: AccessRequestCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a model access request."""
+    # Check if model exists
+    result = await db.execute(select(LLMModel).where(LLMModel.id == request_data.model_id))
+    model = result.scalar_one_or_none()
+    
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    # Check if already has pending request
+    result = await db.execute(
+        select(ModelAccessRequest).where(
+            and_(
+                ModelAccessRequest.user_id == current_user.id,
+                ModelAccessRequest.model_id == request_data.model_id,
+                ModelAccessRequest.status == RequestStatus.PENDING
+            )
+        )
+    )
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Pending request already exists")
+    
+    # Create request
+    access_request = ModelAccessRequest(
+        user_id=current_user.id,
+        model_id=request_data.model_id,
+        request_reason=request_data.request_reason,
+        status=RequestStatus.PENDING,
+    )
+    db.add(access_request)
+    await db.commit()
+    await db.refresh(access_request)
+    
+    return {
+        "id": str(access_request.id),
+        "message": f"Access request for model '{model.alias}' submitted",
+        "status": "pending",
+    }
+
+
+@router.get("/requests")
+async def list_access_requests(
+    status: str = None,
+    current_user: User = Depends(get_current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all access requests (admin only)."""
+    query = select(ModelAccessRequest, User, LLMModel).join(
+        User, ModelAccessRequest.user_id == User.id
+    ).join(
+        LLMModel, ModelAccessRequest.model_id == LLMModel.id
+    )
+    
+    if status:
+        query = query.where(ModelAccessRequest.status == RequestStatus(status))
+    
+    query = query.order_by(ModelAccessRequest.created_at.desc())
+    
+    result = await db.execute(query)
+    requests = result.all()
+    
+    return [
+        {
+            "id": str(req.id),
+            "user_id": str(user.id),
+            "user_email": user.email,
+            "model_id": str(model.id),
+            "model_alias": model.alias,
+            "request_reason": req.request_reason,
+            "status": req.status.value,
+            "response_note": req.response_note,
+            "created_at": req.created_at.isoformat(),
+            "reviewed_at": req.reviewed_at.isoformat() if req.reviewed_at else None,
+        }
+        for req, user, model in requests
+    ]
+
+
+@router.get("/my-requests")
+async def list_my_requests(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List my access requests."""
+    result = await db.execute(
+        select(ModelAccessRequest, LLMModel).join(
+            LLMModel, ModelAccessRequest.model_id == LLMModel.id
+        ).where(
+            ModelAccessRequest.user_id == current_user.id
+        ).order_by(ModelAccessRequest.created_at.desc())
+    )
+    requests = result.all()
+    
+    return [
+        {
+            "id": str(req.id),
+            "model_alias": model.alias,
+            "model_display_name": model.display_name,
+            "request_reason": req.request_reason,
+            "status": req.status.value,
+            "response_note": req.response_note,
+            "created_at": req.created_at.isoformat(),
+            "reviewed_at": req.reviewed_at.isoformat() if req.reviewed_at else None,
+        }
+        for req, model in requests
+    ]
+
+
+class ReviewRequest(BaseModel):
+    response_note: str = None
+
+
+@router.put("/requests/{request_id}/approve")
+async def approve_access_request(
+    request_id: UUID,
+    review: ReviewRequest = None,
+    current_user: User = Depends(get_current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve an access request (admin only)."""
+    result = await db.execute(
+        select(ModelAccessRequest).where(ModelAccessRequest.id == request_id)
+    )
+    request = result.scalar_one_or_none()
+    
+    if not request:
+        raise HTTPException(status_code=404, detail="Request not found")
+    
+    if request.status != RequestStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Request is not pending")
+    
+    # Update request status
+    request.status = RequestStatus.APPROVED
+    request.reviewed_by = current_user.id
+    request.reviewed_at = datetime.utcnow()
+    if review and review.response_note:
+        request.response_note = review.response_note
+    
+    # Grant access
+    result = await db.execute(
+        select(UserModelAccess).where(
+            and_(
+                UserModelAccess.user_id == request.user_id,
+                UserModelAccess.model_id == request.model_id
+            )
+        )
+    )
+    existing = result.scalar_one_or_none()
+    
+    if existing:
+        existing.is_allowed = True
+    else:
+        access = UserModelAccess(
+            user_id=request.user_id,
+            model_id=request.model_id,
+            is_allowed=True,
+            created_by=current_user.id,
+        )
+        db.add(access)
+    
+    await db.commit()
+    
+    return {"message": "Request approved", "status": "approved"}
+
+
+@router.put("/requests/{request_id}/reject")
+async def reject_access_request(
+    request_id: UUID,
+    review: ReviewRequest,
+    current_user: User = Depends(get_current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reject an access request (admin only)."""
+    result = await db.execute(
+        select(ModelAccessRequest).where(ModelAccessRequest.id == request_id)
+    )
+    request = result.scalar_one_or_none()
+    
+    if not request:
+        raise HTTPException(status_code=404, detail="Request not found")
+    
+    if request.status != RequestStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Request is not pending")
+    
+    # Update request status
+    request.status = RequestStatus.REJECTED
+    request.reviewed_by = current_user.id
+    request.reviewed_at = datetime.utcnow()
+    if review and review.response_note:
+        request.response_note = review.response_note
+    
+    await db.commit()
+    
+    return {"message": "Request rejected", "status": "rejected"}
+
+
+@router.get("/requests/pending/count")
+async def get_pending_requests_count(
+    current_user: User = Depends(get_current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get count of pending requests (admin only)."""
+    from sqlalchemy import func
+    
+    result = await db.execute(
+        select(func.count(ModelAccessRequest.id)).where(
+            ModelAccessRequest.status == RequestStatus.PENDING
+        )
+    )
+    count = result.scalar()
+    
+    return {"pending_count": count}

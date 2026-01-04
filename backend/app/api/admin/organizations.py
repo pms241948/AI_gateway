@@ -509,3 +509,319 @@ async def assign_member_to_group(
     return {"message": f"User {user.username} assigned to group"}
 
 
+# ============================================================================
+# Organization Join Request Workflow
+# ============================================================================
+
+from datetime import datetime
+from pydantic import BaseModel
+from app.models.org_request import OrgJoinRequest, JoinRequestStatus
+
+
+class JoinRequestCreate(BaseModel):
+    request_reason: str = None
+
+
+class JoinReviewRequest(BaseModel):
+    response_note: str = None
+
+
+@router.get("/available")
+async def list_available_organizations(
+    db: AsyncSession = Depends(get_db),
+):
+    """List all active organizations available for joining (public endpoint)."""
+    result = await db.execute(
+        select(Organization)
+        .where(Organization.is_active == True)
+        .order_by(Organization.name)
+    )
+    orgs = result.scalars().all()
+    
+    return [
+        {
+            "id": str(org.id),
+            "name": org.name,
+            "description": org.description,
+        }
+        for org in orgs
+    ]
+
+
+@router.post("/{org_id}/join")
+async def request_to_join_organization(
+    org_id: UUID,
+    request_data: JoinRequestCreate = None,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Request to join an organization."""
+    # Check if organization exists
+    result = await db.execute(select(Organization).where(Organization.id == org_id))
+    org = result.scalar_one_or_none()
+    
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    if not org.is_active:
+        raise HTTPException(status_code=400, detail="Organization is not active")
+    
+    # Check if user already belongs to an organization
+    if current_user.organization_id:
+        raise HTTPException(status_code=400, detail="You already belong to an organization")
+    
+    # Check if already has pending request for this org
+    result = await db.execute(
+        select(OrgJoinRequest).where(
+            and_(
+                OrgJoinRequest.user_id == current_user.id,
+                OrgJoinRequest.organization_id == org_id,
+                OrgJoinRequest.status == JoinRequestStatus.PENDING
+            )
+        )
+    )
+    if result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="You already have a pending request for this organization")
+    
+    # Create join request
+    join_request = OrgJoinRequest(
+        user_id=current_user.id,
+        organization_id=org_id,
+        request_reason=request_data.request_reason if request_data else None,
+        status=JoinRequestStatus.PENDING,
+    )
+    db.add(join_request)
+    await db.commit()
+    await db.refresh(join_request)
+    
+    return {
+        "id": str(join_request.id),
+        "message": f"Join request for '{org.name}' submitted",
+        "status": "pending",
+    }
+
+
+@router.get("/{org_id}/join-requests")
+async def list_organization_join_requests(
+    org_id: UUID,
+    status: str = None,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List join requests for an organization (org admin only)."""
+    # Check permission
+    if not await is_org_admin(current_user, org_id, db):
+        raise HTTPException(status_code=403, detail="Not authorized to view join requests")
+    
+    query = select(OrgJoinRequest, User).join(
+        User, OrgJoinRequest.user_id == User.id
+    ).where(OrgJoinRequest.organization_id == org_id)
+    
+    if status:
+        query = query.where(OrgJoinRequest.status == JoinRequestStatus(status))
+    
+    query = query.order_by(OrgJoinRequest.created_at.desc())
+    
+    result = await db.execute(query)
+    requests = result.all()
+    
+    return [
+        {
+            "id": str(req.id),
+            "user_id": str(user.id),
+            "user_email": user.email,
+            "user_username": user.username,
+            "request_reason": req.request_reason,
+            "status": req.status.value,
+            "response_note": req.response_note,
+            "created_at": req.created_at.isoformat(),
+            "reviewed_at": req.reviewed_at.isoformat() if req.reviewed_at else None,
+        }
+        for req, user in requests
+    ]
+
+
+@router.get("/my-join-requests")
+async def list_my_join_requests(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List my organization join requests."""
+    result = await db.execute(
+        select(OrgJoinRequest, Organization).join(
+            Organization, OrgJoinRequest.organization_id == Organization.id
+        ).where(
+            OrgJoinRequest.user_id == current_user.id
+        ).order_by(OrgJoinRequest.created_at.desc())
+    )
+    requests = result.all()
+    
+    return [
+        {
+            "id": str(req.id),
+            "organization_id": str(org.id),
+            "organization_name": org.name,
+            "request_reason": req.request_reason,
+            "status": req.status.value,
+            "response_note": req.response_note,
+            "created_at": req.created_at.isoformat(),
+            "reviewed_at": req.reviewed_at.isoformat() if req.reviewed_at else None,
+        }
+        for req, org in requests
+    ]
+
+
+@router.put("/join-requests/{request_id}/approve")
+async def approve_join_request(
+    request_id: UUID,
+    review: JoinReviewRequest = None,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve a join request (org admin only)."""
+    # Get the request
+    result = await db.execute(
+        select(OrgJoinRequest).where(OrgJoinRequest.id == request_id)
+    )
+    join_request = result.scalar_one_or_none()
+    
+    if not join_request:
+        raise HTTPException(status_code=404, detail="Join request not found")
+    
+    # Check permission
+    if not await is_org_admin(current_user, join_request.organization_id, db):
+        raise HTTPException(status_code=403, detail="Not authorized to approve join requests")
+    
+    if join_request.status != JoinRequestStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Request is not pending")
+    
+    # Update request status
+    join_request.status = JoinRequestStatus.APPROVED
+    join_request.reviewed_by = current_user.id
+    join_request.reviewed_at = datetime.utcnow()
+    if review and review.response_note:
+        join_request.response_note = review.response_note
+    
+    # Add user to organization
+    result = await db.execute(select(User).where(User.id == join_request.user_id))
+    user = result.scalar_one_or_none()
+    
+    if user:
+        user.organization_id = join_request.organization_id
+        
+        # Create membership record
+        result = await db.execute(
+            select(OrganizationMember).where(
+                and_(
+                    OrganizationMember.organization_id == join_request.organization_id,
+                    OrganizationMember.user_id == user.id
+                )
+            )
+        )
+        if not result.scalar_one_or_none():
+            membership = OrganizationMember(
+                organization_id=join_request.organization_id,
+                user_id=user.id,
+                is_admin=False
+            )
+            db.add(membership)
+    
+    await db.commit()
+    
+    return {"message": "Join request approved", "status": "approved"}
+
+
+@router.put("/join-requests/{request_id}/reject")
+async def reject_join_request(
+    request_id: UUID,
+    review: JoinReviewRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reject a join request (org admin only)."""
+    # Get the request
+    result = await db.execute(
+        select(OrgJoinRequest).where(OrgJoinRequest.id == request_id)
+    )
+    join_request = result.scalar_one_or_none()
+    
+    if not join_request:
+        raise HTTPException(status_code=404, detail="Join request not found")
+    
+    # Check permission
+    if not await is_org_admin(current_user, join_request.organization_id, db):
+        raise HTTPException(status_code=403, detail="Not authorized to reject join requests")
+    
+    if join_request.status != JoinRequestStatus.PENDING:
+        raise HTTPException(status_code=400, detail="Request is not pending")
+    
+    # Update request status
+    join_request.status = JoinRequestStatus.REJECTED
+    join_request.reviewed_by = current_user.id
+    join_request.reviewed_at = datetime.utcnow()
+    if review and review.response_note:
+        join_request.response_note = review.response_note
+    
+    await db.commit()
+    
+    return {"message": "Join request rejected", "status": "rejected"}
+
+
+@router.post("/skip-organization")
+async def skip_organization_selection(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark user as having skipped organization selection (independent user)."""
+    # Set a flag that user explicitly chose to be independent
+    # We'll use settings JSONB field on organization table or a user flag
+    # For simplicity, we just return success - user stays without organization
+    
+    return {"message": "You've chosen to continue as an independent user", "organization_id": None}
+
+
+@router.get("/user-status")
+async def get_user_organization_status(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current user's organization status."""
+    has_pending_request = False
+    pending_org_name = None
+    
+    # Check for pending join requests
+    result = await db.execute(
+        select(OrgJoinRequest, Organization).join(
+            Organization, OrgJoinRequest.organization_id == Organization.id
+        ).where(
+            and_(
+                OrgJoinRequest.user_id == current_user.id,
+                OrgJoinRequest.status == JoinRequestStatus.PENDING
+            )
+        ).limit(1)
+    )
+    pending = result.first()
+    if pending:
+        has_pending_request = True
+        pending_org_name = pending[1].name
+    
+    # Get current organization if any
+    org_name = None
+    is_org_admin_flag = False
+    if current_user.organization_id:
+        result = await db.execute(
+            select(Organization).where(Organization.id == current_user.organization_id)
+        )
+        org = result.scalar_one_or_none()
+        if org:
+            org_name = org.name
+            is_org_admin_flag = await is_org_admin(current_user, current_user.organization_id, db)
+    
+    return {
+        "has_organization": current_user.organization_id is not None,
+        "organization_id": str(current_user.organization_id) if current_user.organization_id else None,
+        "organization_name": org_name,
+        "is_org_admin": is_org_admin_flag,
+        "has_pending_request": has_pending_request,
+        "pending_org_name": pending_org_name,
+    }
