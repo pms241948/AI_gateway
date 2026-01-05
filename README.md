@@ -190,6 +190,8 @@ curl -X POST http://localhost:8000/v1/embeddings \
 
 ### Security Features
 
+![Garak Security Scan Results](docs/images/screenshot_garak_scan.png)
+
 - **AI Security Scanning**: Integrated Garak scanner for model vulnerability testing
 - **PII Detection**: Automatic detection and masking of sensitive information
 - **Request Filtering**: Input/output content filtering and moderation

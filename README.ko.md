@@ -190,6 +190,8 @@ curl -X POST http://localhost:8000/v1/embeddings \
 
 ### 보안 기능
 
+![Garak 보안 스캔 결과](docs/images/screenshot_garak_scan.png)
+
 - **AI 보안 스캔**: 모델 취약점 테스트를 위한 Garak 스캐너 통합
 - **PII 탐지**: 민감 정보 자동 탐지 및 마스킹
 - **요청 필터링**: 입출력 콘텐츠 필터링 및 모더레이션

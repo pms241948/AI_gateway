@@ -803,9 +803,11 @@ function ProvidersPage() {
     const handleTest = async (providerId) => {
         try {
             const result = await api.testProvider(providerId)
-            alert(result.success ?
-                `Connection successful! Latency: ${result.latency_ms}ms` :
-                `Connection failed: ${result.error_message}`)
+            if (result.success) {
+                alert(`✅ Test Successful!\n\nLatency: ${result.latency_ms}ms\n\nLLM Response:\n${result.response_preview || '(no response)'}`)
+            } else {
+                alert(`❌ Test Failed!\n\nError: ${result.error_message}`)
+            }
         } catch (err) {
             alert('Test failed: ' + err.message)
         }
