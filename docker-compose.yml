@@ -9,12 +9,8 @@ services:
     container_name: ai_gateway_frontend
     ports:
       - "3000:3000"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     environment:
       - VITE_API_TARGET=http://backend:8000
-    command: sh -c "npm install && npm run dev"
     depends_on:
       - backend
     networks:

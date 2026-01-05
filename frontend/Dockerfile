@@ -1,16 +1,22 @@
-FROM node:20-alpine AS builder
+FROM node:20-alpine
 
 WORKDIR /app
 
 # Copy package files
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
 
-# Copy source and build
+# Install dependencies using npm ci for reproducible builds
+RUN npm ci
+
+# Copy source files
 COPY . .
-RUN npm run build
 
-# Production image - just keeps the build artifacts
-FROM alpine:latest
-COPY --from=builder /app/dist /app/dist
-CMD ["echo", "Build complete"]
+# Change ownership to node user (already exists in node:alpine as UID 1000)
+RUN chown -R node:node /app
+USER node
+
+# Expose port
+EXPOSE 3000
+
+# Run vite using node directly (avoids PATH issues in Alpine)
+CMD ["node", "node_modules/vite/bin/vite.js", "--host"]
