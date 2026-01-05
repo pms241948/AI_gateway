@@ -115,6 +115,19 @@ class ApiClient {
         })
     }
 
+    async updateProvider(providerId, data) {
+        return this.request(`/api/providers/${providerId}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        })
+    }
+
+    async deleteProvider(providerId) {
+        return this.request(`/api/providers/${providerId}`, {
+            method: 'DELETE',
+        })
+    }
+
     // Models
     async getModels() {
         return this.request('/api/models')

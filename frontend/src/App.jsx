@@ -723,6 +723,7 @@ function ProvidersPage() {
     const [providers, setProviders] = useState([])
     const [loading, setLoading] = useState(true)
     const [showModal, setShowModal] = useState(false)
+    const [editingProvider, setEditingProvider] = useState(null)
     const [form, setForm] = useState({
         name: '',
         provider_type: 'ollama',
@@ -730,6 +731,14 @@ function ProvidersPage() {
         auth_type: 'none',
         auth_credentials: '',
     })
+
+    const defaultForm = {
+        name: '',
+        provider_type: 'ollama',
+        base_url: 'http://localhost:11434',
+        auth_type: 'none',
+        auth_credentials: '',
+    }
 
     useEffect(() => {
         loadProviders()
@@ -742,15 +751,52 @@ function ProvidersPage() {
             .finally(() => setLoading(false))
     }
 
+    const openCreateModal = () => {
+        setEditingProvider(null)
+        setForm(defaultForm)
+        setShowModal(true)
+    }
+
+    const openEditModal = (provider) => {
+        setEditingProvider(provider)
+        setForm({
+            name: provider.name,
+            provider_type: provider.provider_type,
+            base_url: provider.base_url,
+            auth_type: provider.auth_type || 'none',
+            auth_credentials: '',
+        })
+        setShowModal(true)
+    }
+
+    const closeModal = () => {
+        setShowModal(false)
+        setEditingProvider(null)
+        setForm(defaultForm)
+    }
+
     const handleSubmit = async (e) => {
         e.preventDefault()
         try {
-            await api.createProvider(form)
-            setShowModal(false)
-            setForm({ name: '', provider_type: 'ollama', base_url: 'http://localhost:11434', auth_type: 'none', auth_credentials: '' })
+            if (editingProvider) {
+                await api.updateProvider(editingProvider.id, form)
+            } else {
+                await api.createProvider(form)
+            }
+            closeModal()
             loadProviders()
         } catch (err) {
             alert('Error: ' + err.message)
+        }
+    }
+
+    const handleDelete = async (providerId, providerName) => {
+        if (!confirm(`Are you sure you want to delete provider "${providerName}"?`)) return
+        try {
+            await api.deleteProvider(providerId)
+            loadProviders()
+        } catch (err) {
+            alert('Error deleting provider: ' + err.message)
         }
     }
 
@@ -772,7 +818,7 @@ function ProvidersPage() {
                     <h1 className="page-title">Providers</h1>
                     <p className="page-subtitle">Configure LLM provider connections</p>
                 </div>
-                <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+                <button className="btn btn-primary" onClick={openCreateModal}>
                     + Add Provider
                 </button>
             </div>
@@ -812,9 +858,21 @@ function ProvidersPage() {
                                             </span>
                                         </td>
                                         <td>
-                                            <button className="btn btn-secondary" onClick={() => handleTest(provider.id)}>
-                                                Test
-                                            </button>
+                                            <div style={{ display: 'flex', gap: 'var(--spacing-2)' }}>
+                                                <button className="btn btn-secondary" onClick={() => handleTest(provider.id)}>
+                                                    Test
+                                                </button>
+                                                <button className="btn btn-secondary" onClick={() => openEditModal(provider)}>
+                                                    Edit
+                                                </button>
+                                                <button
+                                                    className="btn btn-secondary"
+                                                    style={{ color: 'var(--color-error)' }}
+                                                    onClick={() => handleDelete(provider.id, provider.name)}
+                                                >
+                                                    Delete
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 ))}
@@ -825,11 +883,11 @@ function ProvidersPage() {
             </div>
 
             {showModal && (
-                <div className="modal-overlay" onClick={() => setShowModal(false)}>
+                <div className="modal-overlay" onClick={closeModal}>
                     <div className="modal" onClick={e => e.stopPropagation()}>
                         <div className="modal-header">
-                            <h2 className="modal-title">Add Provider</h2>
-                            <button className="modal-close" onClick={() => setShowModal(false)}>×</button>
+                            <h2 className="modal-title">{editingProvider ? 'Edit Provider' : 'Add Provider'}</h2>
+                            <button className="modal-close" onClick={closeModal}>×</button>
                         </div>
                         <form onSubmit={handleSubmit}>
                             <div className="form-group">
@@ -859,13 +917,13 @@ function ProvidersPage() {
                             </div>
                             {form.auth_type !== 'none' && (
                                 <div className="form-group">
-                                    <label className="form-label">API Key / Token</label>
+                                    <label className="form-label">API Key / Token {editingProvider && '(leave blank to keep current)'}</label>
                                     <input type="password" className="form-input" value={form.auth_credentials} onChange={e => setForm({ ...form, auth_credentials: e.target.value })} />
                                 </div>
                             )}
                             <div className="modal-footer">
-                                <button type="button" className="btn btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
-                                <button type="submit" className="btn btn-primary">Create Provider</button>
+                                <button type="button" className="btn btn-secondary" onClick={closeModal}>Cancel</button>
+                                <button type="submit" className="btn btn-primary">{editingProvider ? 'Save Changes' : 'Create Provider'}</button>
                             </div>
                         </form>
                     </div>
